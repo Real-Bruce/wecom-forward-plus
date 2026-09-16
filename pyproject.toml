@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wecom-forward-plus"
+version = "0.1.0"
+description = "Bridge between Enterprise WeChat bots and Dify"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "wecom-aibot-python-sdk>=1.0.2",
+    "aiohttp>=3.9",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+wecom-forward-plus = "src.main:main"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
