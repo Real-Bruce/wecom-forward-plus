@@ -95,6 +95,29 @@ wecom-forward-plus
 
 Logs are written to stdout and rotated into `logs/app.log`.
 
+## Deploy with Docker
+
+All Docker files live in `docker/` (`Dockerfile`, `docker-compose.yml`, `Dockerfile.dockerignore`).
+
+```bash
+# 1. Provide configuration in the repository root (never committed)
+cp .env.example .env
+#   …fill in real values…
+
+# 2. Build and start in the background (run from the docker/ directory)
+cd docker
+docker compose up -d --build
+
+# 3. Tail logs
+docker compose logs -f
+
+# Stop / restart
+docker compose down
+docker compose restart
+```
+
+Configuration is injected via compose's `env_file` (`.env` in the repository root); the image itself contains no secrets. The host directory `logs/` (repository root) is mounted at `/app/logs` so the rotating log file (`logs/app.log`) persists across container recreations. The container restarts automatically (`unless-stopped`) unless explicitly stopped.
+
 ## Tests
 
 ```bash

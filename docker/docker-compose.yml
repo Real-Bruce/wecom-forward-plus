@@ -1,0 +1,24 @@
+# Run wecom-forward-plus on a server.
+#
+# Copy `.env.example` to `.env` in the repository root and fill in real
+# values, then from this directory:
+#     docker compose up -d --build
+#
+# The build context is the repository root (parent of this directory), so
+# Dockerfile COPY paths are relative to the repo root. Configuration is
+# injected via `env_file`; the container does not need a copy of `.env`
+# inside it. Rotating logs are written to ../logs on the host.
+
+services:
+  wecom-forward-plus:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: wecom-forward-plus:latest
+    container_name: wecom-forward-plus
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    volumes:
+      # Persist rotating log files (logs/app.log) to the host.
+      - ../logs:/app/logs
