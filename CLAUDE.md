@@ -1,0 +1,33 @@
+# CLAUDE.md
+
+Guidance for AI agents working in this repository. User-facing usage and full
+configuration details live in `README.md` — do not duplicate them here.
+
+## Project
+
+`wecom-forward-plus` is a Python bridge between Enterprise WeChat bots and
+Dify. One service process runs one WeCom long-connection client per configured
+"group"; each group pairs one WeCom robot with one Dify app API key. A user's
+WeCom account name is sent to Dify as `wx_<account>` to scope conversations.
+
+## Module map (src/)
+
+- `main.py` — entry point: load config, set up logging, start one `WeComClient` per group.
+- `config.py` — parse/validate `WECOM_FORWARD_PLUS_*` env vars; defines `Config`/`GroupConfig`/`ConfigError` and `load_config()`.
+- `session_manager.py` — `SessionManager`/`GroupPool`/`Session` (TTL, per-group cap, LRU eviction, reset, optional sweeper).
+- `dify_client.py` — async `DifyClient` (streaming) plus pure `iter_sse_events`/`accumulate_stream`; `DifyError`.
+- `wecom_client.py` — thin wrapper around `wecom-aibot-python-sdk` (`WSClient`).
+- `message_handler.py` — routes message → session → Dify → reply; owns `handle()` and `handler_for(group_id)`.
+- `constants.py` — `RESET_REPLY` / `ERROR_REPLY`.
+
+## Run / test
+
+- Run from source: `python -m src.main` (loads `.env` via python-dotenv). Config errors exit with code 1.
+- Tests: `pytest` (`pytest-asyncio` auto mode; `pythonpath = ["."]` in pyproject).
+
+## Constraints & rules
+
+- **Secrets** — never read `.env`/`.env.local`/`secrets/`/`*.key`/`*.pem`; never git-add them; never embed real values in code or docs. Only placeholders may appear in `.env.example`. Never log `WECOM_ROBOT_ID`, `WECOM_ROBOT_SECRET`, `DIFY_API_KEY`, or raw Dify request bodies.
+- **Docs stay in sync** — every functional change must update `README.md` in the same commit. Keep `CLAUDE.md` limited to architecture / config / run / constraints; anything available in `README.md` belongs there, not here.
+- **Commits** — English commit messages; one logical change per commit.
+- **Tests before commit** — `pytest` must pass before committing.
