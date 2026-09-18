@@ -95,6 +95,27 @@ wecom-forward-plus
 
 Logs are written to stdout and rotated into `logs/app.log`.
 
+## Package for deployment
+
+To deploy on a server without cloning the repository, build a source archive with one command:
+
+```bash
+bash scripts/package.sh
+# -> dist/wecom-forward-plus-<commit>.tar.gz
+```
+
+The archive is produced by `git archive` from the current `HEAD` commit, so it contains exactly the tracked files (source, tests, `docker/`, `docs/`) — never `.env`, `.venv`, `logs/`, or other local state. The short commit hash is appended to the file name; if the working tree has uncommitted changes, the script warns that they are not included.
+
+Transfer and unpack on the server:
+
+```bash
+scp dist/wecom-forward-plus-<commit>.tar.gz user@server:~/
+ssh user@server
+tar -xzf wecom-forward-plus-<commit>.tar.gz   # unpacks into ./wecom-forward-plus/
+```
+
+Then continue with [Deploy with Docker](#deploy-with-docker).
+
 ## Deploy with Docker
 
 All Docker files live in `docker/` (`Dockerfile`, `docker-compose.yml`, `Dockerfile.dockerignore`).
