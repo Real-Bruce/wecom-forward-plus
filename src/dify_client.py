@@ -238,7 +238,9 @@ class DifyClient:
         session = await self._get_session()
         try:
             async with session.post(url, headers=headers, data=form) as resp:
-                if resp.status != 200:
+                # Dify answers a successful upload with 201 Created (the
+                # chat-messages endpoint uses plain 200).
+                if resp.status not in (200, 201):
                     raise DifyError(
                         await self._format_error_response(resp), status=resp.status
                     )
