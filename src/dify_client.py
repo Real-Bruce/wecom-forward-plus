@@ -1,23 +1,32 @@
-"""Async client for the Dify chat-messages API (streaming mode).
+"""Async client for the Dify chat-messages and file-upload APIs.
 
 Only the streaming response mode is supported in this version. The client
 POSTs ``/chat-messages`` and reduces the Server-Sent Events stream into a final
 answer plus the ``conversation_id``, which the caller stores to keep a
-multi-turn conversation alive.
+multi-turn conversation alive. Media forwarded from WeCom is first uploaded via
+``POST /files/upload`` and then referenced from the ``files`` array of the chat
+request with the same ``user``.
 
-The pure parsing helpers (:func:`iter_sse_events` / :func:`accumulate_stream`)
-are separated from the aiohttp transport so they can be unit-tested without any
-network access.
+The pure parsing helpers (:func:`iter_sse_events` / :func:`accumulate_stream`
+/ :func:`parse_upload_payload`) are separated from the aiohttp transport so
+they can be unit-tested without any network access.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 from dataclasses import dataclass
-from typing import AsyncIterator, Iterable, Iterator, Optional
+from typing import AsyncIterator, Iterable, Iterator, Mapping, Optional, Sequence
 
 import aiohttp
+
+# Dify's default per-category upload limits (self-hosted instances can raise
+# them via UPLOAD_*_FILE_SIZE_LIMIT env vars; a server-side 413 is mapped to a
+# friendly reply by the caller either way).
+MAX_IMAGE_FILE_BYTES = 10 * 1024 * 1024
+MAX_DOCUMENT_FILE_BYTES = 15 * 1024 * 1024
 
 
 class DifyError(Exception):
@@ -34,6 +43,30 @@ class DifyStreamResult:
 
     answer: str
     conversation_id: Optional[str] = None
+
+
+@dataclass
+class DifyUploadedFile:
+    """Descriptor returned by a successful ``POST /files/upload``."""
+
+    id: str
+    name: Optional[str] = None
+    mime_type: Optional[str] = None
+    size: Optional[int] = None
+    extension: Optional[str] = None
+
+
+def parse_upload_payload(payload: object) -> DifyUploadedFile:
+    """Parse a ``/files/upload`` JSON body; raise if the file id is missing."""
+    if not isinstance(payload, dict) or not payload.get("id"):
+        raise DifyError("Dify file upload response missing file id")
+    return DifyUploadedFile(
+        id=str(payload["id"]),
+        name=payload.get("name"),
+        mime_type=payload.get("mime_type"),
+        size=payload.get("size"),
+        extension=payload.get("extension"),
+    )
 
 
 def iter_sse_events(lines: Iterable[str]) -> Iterator[dict]:
@@ -132,8 +165,13 @@ class DifyClient:
         query: str,
         user: str,
         conversation_id: Optional[str] = None,
+        files: Optional[Sequence[Mapping[str, object]]] = None,
     ) -> DifyStreamResult:
-        """Send one message and return the accumulated answer + conversation id."""
+        """Send one message and return the accumulated answer + conversation id.
+
+        ``files`` entries reference previously uploaded files, e.g.
+        ``{"type": "image", "transfer_method": "local_file", "upload_file_id": ...}``.
+        """
         url = f"{self._base_url}/chat-messages"
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -147,6 +185,8 @@ class DifyClient:
         }
         if conversation_id:
             payload["conversation_id"] = conversation_id
+        if files:
+            payload["files"] = [dict(file) for file in files]
 
         session = await self._get_session()
         events = []
@@ -166,6 +206,54 @@ class DifyClient:
             raise DifyError(f"Dify request failed: {exc}") from exc
 
         return accumulate_stream(events)
+
+    async def upload_file(
+        self,
+        api_key: str,
+        user: str,
+        filename: str,
+        data: bytes,
+        content_type: Optional[str] = None,
+    ) -> DifyUploadedFile:
+        """Upload one file via ``POST /files/upload`` and return its descriptor.
+
+        The file is owned by ``user``; only a later chat request carrying the
+        same ``user`` may reference the returned id.
+        """
+        url = f"{self._base_url}/files/upload"
+        # Only the auth header is set: aiohttp generates the multipart boundary
+        # and Content-Type itself, which a manual header would corrupt.
+        headers = {"Authorization": f"Bearer {api_key}"}
+        form = aiohttp.FormData()
+        form.add_field("user", user)
+        form.add_field(
+            "file",
+            data,
+            filename=filename,
+            content_type=content_type
+            or mimetypes.guess_type(filename)[0]
+            or "application/octet-stream",
+        )
+
+        session = await self._get_session()
+        try:
+            async with session.post(url, headers=headers, data=form) as resp:
+                if resp.status != 200:
+                    raise DifyError(
+                        await self._format_error_response(resp), status=resp.status
+                    )
+                try:
+                    payload = await resp.json()
+                except (json.JSONDecodeError, ValueError):
+                    raise DifyError("Dify file upload returned invalid JSON") from None
+        except DifyError:
+            raise
+        except asyncio.TimeoutError:
+            raise DifyError("Dify file upload timed out") from None
+        except aiohttp.ClientError as exc:
+            raise DifyError(f"Dify file upload failed: {exc}") from exc
+
+        return parse_upload_payload(payload)
 
     async def _iter_response_events(self, resp) -> AsyncIterator[dict]:
         async for raw in resp.content:

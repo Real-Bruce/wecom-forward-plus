@@ -12,6 +12,7 @@ Dify  <=>  wecom-forward-plus  <=>  企业微信机器人
 
 - **Multiple groups** — each group pairs one WeCom robot with one Dify app API key and can be configured independently.
 - **WeCom account name as `user`** — the sender's account name is sent to Dify as `wx_<account>` (e.g. `zhangsan` → `wx_zhangsan`), so each user keeps their own conversation history.
+- **File & image forwarding** — images, files (Word/PDF/…) and mixed image+text messages are downloaded from WeCom, uploaded to Dify, and sent with the `files` parameter; voice messages stay auto-transcribed.
 - **Session management** — per-group session pools with a TTL (default 5 minutes of inactivity), a per-group cap (default 200), least-recently-used eviction, and keyword-triggered resets.
 - **Streaming Dify replies** — uses Dify's `streaming` response mode and accumulates the full answer before replying.
 - **Resilience** — automatic WeCom reconnection (exponential backoff), reply retries, and sanitized error handling (Dify failures return a friendly message instead of crashing).
@@ -23,19 +24,48 @@ src/
 ├── main.py               Entry point: load config, logging, start one client per group
 ├── config.py             Parse + validate WECOM_FORWARD_PLUS_* environment variables
 ├── session_manager.py    Per-group session pools (TTL + cap + LRU eviction + reset)
-├── dify_client.py        Async Dify chat-messages client (streaming) + SSE parsing
-├── wecom_client.py       Wrapper around wecom-aibot-python-sdk (long connection)
+├── dify_client.py        Async Dify chat-messages client (streaming) + file upload + SSE parsing
+├── wecom_client.py       Wrapper around wecom-aibot-python-sdk (long connection + media download)
 ├── message_handler.py    Routes WeCom message -> session -> Dify -> reply text
+├── attachment.py         Immutable description of one downloaded media item
 └── constants.py          Fixed user-facing reply strings
 ```
 
 Flow of a single message:
 
-1. WeCom delivers a frame; `wecom_client` extracts the sender account and text content.
+1. WeCom delivers a frame; `wecom_client` extracts the sender account and text content (media frames are downloaded and decrypted right away — the WeCom media URLs expire after ~5 minutes).
 2. `message_handler` builds `dify_user = "wx_" + from_user`.
-3. If the text is a reset keyword, the user's session is reset and the fixed reply is returned (Dify is **not** called).
-4. Otherwise the user's session is fetched/created and `POST /chat-messages` is called with `response_mode="streaming"`.
+3. If the text is a reset keyword *and* the message carries no files, the user's session is reset and the fixed reply is returned (Dify is **not** called).
+4. Media attachments are size-checked locally, then uploaded via `POST /files/upload` under the same `wx_<account>` user, and referenced from the `files` array of `POST /chat-messages` (which is called with `response_mode="streaming"`).
 5. The streamed answer is accumulated, the returned `conversation_id` is stored, and the answer is sent back to WeCom.
+
+## File and image forwarding
+
+The following WeCom message types are forwarded to Dify:
+
+| WeCom message | Sent to Dify as |
+| --- | --- |
+| Image | one `files[]` entry with `type: "image"` |
+| File (Word, PDF, …) | one `files[]` entry with `type: "document"` |
+| Mixed (image + text) | the text as `query` plus one `files[]` entry per image |
+| Voice | auto-transcribed text (as before, no file is sent) |
+
+Details and caveats:
+
+- **Dify prerequisites** — the target app must allow the corresponding file types in its file-upload settings (and enable vision for image understanding); otherwise the upload is rejected and the user receives the upload-failed reply.
+- **Default query** — when a file arrives with no accompanying text, the fixed message 「请处理我发送的文件」 is sent as the `query` (Dify requires a non-empty query).
+- **Size limits** — Dify's defaults (images 10 MB, other files 15 MB) are pre-checked locally so an oversized file gets an immediate friendly reply; a server-side `413` from a self-hosted instance with custom limits maps to the same reply.
+- **User identity** — the upload and the chat request both carry the same `wx_<account>` user, which Dify requires for referencing an uploaded file.
+- **Reset keywords** — a reset keyword arriving *with* an attachment still forwards the message (no reset happens).
+
+Error replies for file messages (defined in `src/constants.py`):
+
+| Situation | Reply |
+| --- | --- |
+| WeCom download/decryption failed | 文件下载失败，请稍后重试 |
+| Dify upload failed | 文件上传失败，请稍后重试 |
+| File exceeds the size limit | 文件超出大小限制（图片最大10MB，其他文件最大15MB），请压缩后重试 |
+| Downloaded file is empty | 文件内容为空，请检查后重新发送 |
 
 ## Requirements
 
