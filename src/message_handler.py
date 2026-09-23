@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable, Sequence
+from typing import Awaitable, Callable, Optional, Sequence
 
 from .attachment import Attachment, KIND_IMAGE
 from .config import Config
@@ -21,6 +21,7 @@ from .dify_client import (
     MAX_DOCUMENT_FILE_BYTES,
     MAX_IMAGE_FILE_BYTES,
 )
+from .config_store import GroupStore
 from .session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,10 @@ class MessageHandler:
     Messages carrying attachments (images, files, mixed) are validated locally,
     uploaded to Dify under the same ``wx_<account>`` user that later references
     them, and sent with the ``files`` parameter.
+
+    Group credentials are resolved per message through a :class:`GroupStore`
+    so that a database-managed group whose Dify API key changed takes effect
+    on the very next message, without any reconnect.
     """
 
     def __init__(
@@ -44,11 +49,13 @@ class MessageHandler:
         config: Config,
         session_manager: SessionManager,
         dify_client: DifyClient,
+        groups: Optional[GroupStore] = None,
     ) -> None:
         self._config = config
         self._sessions = session_manager
         self._dify = dify_client
         self._reset_keywords = set(config.reset_keywords)
+        self._groups = groups if groups is not None else GroupStore.from_config(config)
 
     def handler_for(
         self, group_id: str
@@ -81,7 +88,13 @@ class MessageHandler:
             logger.info("Session reset for group=%s user=%s", group_id, dify_user)
             return RESET_REPLY
 
-        group = self._config.get_group(group_id)
+        try:
+            group = self._groups.get(group_id)
+        except KeyError:
+            # The group was removed (or disabled) while its client was still
+            # connected; reply with the generic error text.
+            logger.warning("Message arrived for unknown group=%s", group_id)
+            return ERROR_REPLY
         session = self._sessions.get_or_create(group_id, dify_user)
 
         files = None

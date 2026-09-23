@@ -14,6 +14,7 @@ WeCom account name is sent to Dify as `wx_<account>` to scope conversations.
 
 - `main.py` — entry point: load config, set up logging, start one `WeComClient` per group.
 - `config.py` — parse/validate `WECOM_FORWARD_PLUS_*` env vars; defines `Config`/`GroupConfig`/`ConfigError` and `load_config()`.
+- `config_store.py` — `GroupStore`, the mutable in-process group registry the message handler consults per message (hot reload seam).
 - `session_manager.py` — `SessionManager`/`GroupPool`/`Session` (TTL, per-group cap, LRU eviction, reset, optional sweeper).
 - `dify_client.py` — async `DifyClient` (streaming chat + file upload) plus pure `iter_sse_events`/`accumulate_stream`/`parse_upload_payload`; `DifyError`.
 - `wecom_client.py` — thin wrapper around `wecom-aibot-python-sdk` (`WSClient`); downloads/decrypts media (image/file/mixed) into `Attachment`s.

@@ -110,6 +110,7 @@ All settings are read from environment variables (loaded from `.env` via python-
 | `WECOM_FORWARD_PLUS_GROUP_{N}_WECOM_ROBOT_SECRET` | ✅ (per group) | — | WeCom robot secret |
 | `WECOM_FORWARD_PLUS_GROUP_{N}_DIFY_API_KEY` | ✅ (per group) | — | Dify app API key |
 | `WECOM_FORWARD_PLUS_GROUP_{N}_SESSION_MAX_TOTAL` | — | global default | Per-group override of the session cap |
+| `WECOM_FORWARD_PLUS_GROUP_{N}_SESSION_TTL_SECONDS` | — | global default | Per-group override of the conversation TTL |
 
 Group indices start at 1 and must be contiguous. Each group requires `WECOM_ROBOT_ID`, `WECOM_ROBOT_SECRET`, and `DIFY_API_KEY` together; an incomplete group fails startup with exit code 1.
 

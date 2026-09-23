@@ -3,6 +3,7 @@
 import pytest
 
 from src.config import (
+    DEFAULT_DB_RELOAD_INTERVAL_SECONDS,
     DEFAULT_RESET_KEYWORDS,
     DEFAULT_SESSION_MAX_TOTAL,
     DEFAULT_SESSION_TTL_SECONDS,
@@ -128,3 +129,84 @@ def test_duplicate_group_names():
 def test_invalid_integer():
     with pytest.raises(ConfigError, match="must be an integer"):
         load_config(_env(**{"WECOM_FORWARD_PLUS_SESSION_TTL_SECONDS": "abc"}))
+
+
+# -- config source / database mode --------------------------------------------
+
+
+def test_config_source_defaults_to_env():
+    config = load_config(_env())
+    assert config.config_source == "env"
+    assert config.database_url == ""
+    assert config.db_reload_interval_seconds == DEFAULT_DB_RELOAD_INTERVAL_SECONDS
+
+
+def test_invalid_config_source():
+    with pytest.raises(ConfigError, match="must be 'env' or 'database'"):
+        load_config(_env(**{"WECOM_FORWARD_PLUS_CONFIG_SOURCE": "yaml"}))
+
+
+def test_database_source_requires_database_url():
+    with pytest.raises(ConfigError, match="DATABASE_URL is required"):
+        load_config(
+            _env(
+                **{
+                    "WECOM_FORWARD_PLUS_CONFIG_SOURCE": "database",
+                }
+            )
+        )
+
+
+def _db_env(**overrides):
+    env = _env(
+        **{
+            "WECOM_FORWARD_PLUS_CONFIG_SOURCE": "database",
+            "WECOM_FORWARD_PLUS_DATABASE_URL": "postgresql://user:pw@localhost:5432/wfp",
+        }
+    )
+    env.update(overrides)
+    return env
+
+
+def test_database_source_skips_env_groups():
+    # No GROUP_ variables at all, and stale/gapped ones must not break either.
+    env = _db_env()
+    del env["WECOM_FORWARD_PLUS_GROUP_1_WECOM_ROBOT_ID"]
+    del env["WECOM_FORWARD_PLUS_GROUP_1_WECOM_ROBOT_SECRET"]
+    del env["WECOM_FORWARD_PLUS_GROUP_1_DIFY_API_KEY"]
+    env["WECOM_FORWARD_PLUS_GROUP_3_WECOM_ROBOT_ID"] = "bot-3"  # gap ignored
+
+    config = load_config(env)
+
+    assert config.config_source == "database"
+    assert config.groups == []
+    assert config.dify_base_url  # globals still required and parsed
+
+
+def test_db_reload_interval_validation_and_clamping():
+    with pytest.raises(ConfigError, match="must be positive"):
+        load_config(_db_env(**{"WECOM_FORWARD_PLUS_DB_RELOAD_INTERVAL_SECONDS": "0"}))
+
+    clamped = load_config(_db_env(**{"WECOM_FORWARD_PLUS_DB_RELOAD_INTERVAL_SECONDS": "1"}))
+    assert clamped.db_reload_interval_seconds == 5.0
+
+    config = load_config(_db_env(**{"WECOM_FORWARD_PLUS_DB_RELOAD_INTERVAL_SECONDS": "60"}))
+    assert config.db_reload_interval_seconds == 60.0
+
+
+# -- per-group session TTL override --------------------------------------------
+
+
+def test_per_group_session_ttl_env_override():
+    config = load_config(
+        _env(**{"WECOM_FORWARD_PLUS_GROUP_1_SESSION_TTL_SECONDS": "600"})
+    )
+    assert config.groups[0].session_ttl_seconds == 600
+    # Global default untouched; unset groups inherit None.
+    assert config.session_ttl_seconds == DEFAULT_SESSION_TTL_SECONDS
+    assert config.groups[0].session_max_total == DEFAULT_SESSION_MAX_TOTAL
+
+
+def test_per_group_session_ttl_must_be_positive():
+    with pytest.raises(ConfigError, match="SESSION_TTL_SECONDS must be positive"):
+        load_config(_env(**{"WECOM_FORWARD_PLUS_GROUP_1_SESSION_TTL_SECONDS": "0"}))

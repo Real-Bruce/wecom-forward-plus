@@ -5,6 +5,12 @@ Each configured group owns an independent :class:`GroupPool` mapping a
 lazily on access and optionally by a background sweeper thread started from
 :meth:`SessionManager.start_sweeper`. All public methods are guarded by a
 re-entrant lock so the background thread and the asyncio loop can share them.
+
+Pools are created for the initial group set at construction time; when groups
+are database-managed, the reconcile loop mutates the set at runtime through
+:meth:`ensure_pool` / :meth:`update_pool` / :meth:`remove_pool`. Parameter
+updates are applied in place so live conversations survive them; removing a
+group drops its pool and every session in it.
 """
 
 from __future__ import annotations
@@ -13,9 +19,9 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, Optional, Sequence, Tuple
 
-from .config import Config
+from .config import Config, GroupConfig
 
 
 @dataclass
@@ -83,6 +89,22 @@ class GroupPool:
         with self._lock:
             self._evict_expired_locked()
 
+    def set_ttl_seconds(self, ttl_seconds: float) -> None:
+        """Apply a new TTL; sessions keep their positions and history."""
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        with self._lock:
+            self._ttl_seconds = ttl_seconds
+
+    def set_max_total(self, max_total: int) -> None:
+        """Apply a new cap, evicting LRU sessions immediately when it shrinks."""
+        if max_total <= 0:
+            raise ValueError("max_total must be at least 1")
+        with self._lock:
+            self._max_total = max_total
+            while len(self._sessions) > self._max_total:
+                self._sessions.popitem(last=False)
+
     def _evict_expired_locked(self) -> None:
         now = self._clock()
         expired = [
@@ -105,19 +127,54 @@ class GroupPool:
 class SessionManager:
     """Owns one :class:`GroupPool` per configured group."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(
+        self,
+        config: Config,
+        groups: Optional[Sequence[GroupConfig]] = None,
+    ) -> None:
+        """Build a pool per group.
+
+        ``groups`` defaults to ``config.groups``; database mode passes the
+        groups currently loaded from the database instead. Each pool resolves
+        its TTL as the group's override or the global default.
+        """
+        if groups is None:
+            groups = config.groups
         self._pools: Dict[str, GroupPool] = {}
-        for group in config.groups:
+        self._lock = threading.RLock()
+        for group in groups:
             self._pools[group.name] = GroupPool(
-                ttl_seconds=config.session_ttl_seconds,
+                ttl_seconds=group.session_ttl_seconds or config.session_ttl_seconds,
                 max_total=group.session_max_total,
             )
 
     def _pool(self, group_id: str) -> GroupPool:
-        pool = self._pools.get(group_id)
+        with self._lock:
+            pool = self._pools.get(group_id)
         if pool is None:
             raise KeyError(f"Unknown group: {group_id}")
         return pool
+
+    def ensure_pool(self, group: GroupConfig, default_ttl: int) -> None:
+        """Create the group's pool if absent (no-op when it already exists)."""
+        with self._lock:
+            if group.name in self._pools:
+                return
+            self._pools[group.name] = GroupPool(
+                ttl_seconds=group.session_ttl_seconds or default_ttl,
+                max_total=group.session_max_total,
+            )
+
+    def update_pool(self, group: GroupConfig, default_ttl: int) -> None:
+        """Apply new session parameters in place; sessions are kept."""
+        pool = self._pool(group.name)
+        pool.set_ttl_seconds(group.session_ttl_seconds or default_ttl)
+        pool.set_max_total(group.session_max_total)
+
+    def remove_pool(self, group_id: str) -> None:
+        """Drop the group's pool together with all its sessions."""
+        with self._lock:
+            self._pools.pop(group_id, None)
 
     def get_or_create(self, group_id: str, wx_user: str) -> Session:
         return self._pool(group_id).get_or_create(wx_user)
@@ -126,11 +183,15 @@ class SessionManager:
         self._pool(group_id).reset(wx_user)
 
     def sweep_expired(self) -> None:
-        for pool in self._pools.values():
+        with self._lock:
+            pools = list(self._pools.values())
+        for pool in pools:
             pool.sweep_expired()
 
     def size(self) -> int:
-        return sum(len(pool) for pool in self._pools.values())
+        with self._lock:
+            pools = list(self._pools.values())
+        return sum(len(pool) for pool in pools)
 
     def start_sweeper(
         self, interval: float = 60.0

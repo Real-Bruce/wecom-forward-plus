@@ -9,10 +9,16 @@ python-dotenv). Groups are discovered by scanning indexed variables:
 - ``WECOM_FORWARD_PLUS_GROUP_{N}_DIFY_API_KEY``      (required per group)
 - ``WECOM_FORWARD_PLUS_GROUP_{N}_NAME``              (optional, default ``group-{N}``)
 - ``WECOM_FORWARD_PLUS_GROUP_{N}_SESSION_MAX_TOTAL`` (optional, overrides global)
+- ``WECOM_FORWARD_PLUS_GROUP_{N}_SESSION_TTL_SECONDS`` (optional, overrides global)
 
 Indices are 1-based and must be contiguous. Any incomplete or gapped group, or
 any missing required variable, raises :class:`ConfigError` so the process can
 exit with a clear message before connecting to anything.
+
+``WECOM_FORWARD_PLUS_CONFIG_SOURCE`` selects where group configuration comes
+from: ``env`` (the default, variables as above) or ``database`` (groups are
+read from PostgreSQL and ``GROUP_`` variables are not parsed at all). In
+``database`` mode ``WECOM_FORWARD_PLUS_DATABASE_URL`` is required.
 """
 
 from __future__ import annotations
@@ -24,9 +30,16 @@ from typing import List, Mapping, Optional
 
 PREFIX = "WECOM_FORWARD_PLUS_"
 
+SOURCE_ENV = "env"
+SOURCE_DATABASE = "database"
+
 DEFAULT_SESSION_TTL_SECONDS = 300
 DEFAULT_SESSION_MAX_TOTAL = 200
 DEFAULT_RESET_KEYWORDS = ["开启新对话", "重置对话", "新一轮对话"]
+
+DEFAULT_DB_RELOAD_INTERVAL_SECONDS = 30.0
+# Never reconcile faster than this, whatever the configuration says.
+_MIN_DB_RELOAD_INTERVAL_SECONDS = 5.0
 
 # Stop scanning group indices at this upper bound.
 _MAX_GROUP_INDEX = 1000
@@ -38,7 +51,11 @@ class ConfigError(Exception):
 
 @dataclass
 class GroupConfig:
-    """One WeCom robot <-> one Dify app API key, plus its session cap."""
+    """One WeCom robot <-> one Dify app API key, plus its session cap.
+
+    ``session_ttl_seconds`` is ``None`` when the group inherits the global TTL
+    (database rows store it as a nullable column for the same reason).
+    """
 
     index: int
     name: str
@@ -46,6 +63,7 @@ class GroupConfig:
     wecom_robot_secret: str
     dify_api_key: str
     session_max_total: int
+    session_ttl_seconds: Optional[int] = None
 
 
 @dataclass
@@ -57,6 +75,9 @@ class Config:
     session_max_total: int
     reset_keywords: List[str]
     groups: List[GroupConfig] = field(default_factory=list)
+    config_source: str = SOURCE_ENV
+    database_url: str = ""
+    db_reload_interval_seconds: float = DEFAULT_DB_RELOAD_INTERVAL_SECONDS
 
     def get_group(self, group_id: str) -> GroupConfig:
         for group in self.groups:
@@ -70,6 +91,20 @@ def _parse_int(value: str, var_name: str) -> int:
         return int(str(value).strip())
     except (TypeError, ValueError):
         raise ConfigError(f"{var_name} must be an integer, got {value!r}") from None
+
+
+def _parse_float(value: str, var_name: str) -> float:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        raise ConfigError(f"{var_name} must be a number, got {value!r}") from None
+
+
+def _float_env(env: Mapping[str, str], suffix: str, default: float) -> float:
+    raw = env.get(PREFIX + suffix)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return _parse_float(raw, PREFIX + suffix)
 
 
 def _int_env(env: Mapping[str, str], suffix: str, default: int) -> int:
@@ -142,6 +177,17 @@ def _parse_groups(env: Mapping[str, str], default_max: int) -> List[GroupConfig]
                 f"{PREFIX}GROUP_{n}_SESSION_MAX_TOTAL must be positive"
             )
 
+        session_ttl = None
+        ttl_raw = env.get(f"{PREFIX}GROUP_{n}_SESSION_TTL_SECONDS")
+        if ttl_raw is not None and str(ttl_raw).strip() != "":
+            session_ttl = _parse_int(
+                ttl_raw, f"{PREFIX}GROUP_{n}_SESSION_TTL_SECONDS"
+            )
+            if session_ttl <= 0:
+                raise ConfigError(
+                    f"{PREFIX}GROUP_{n}_SESSION_TTL_SECONDS must be positive"
+                )
+
         groups.append(
             GroupConfig(
                 index=n,
@@ -150,6 +196,7 @@ def _parse_groups(env: Mapping[str, str], default_max: int) -> List[GroupConfig]
                 wecom_robot_secret=robot_secret,
                 dify_api_key=dify_key,
                 session_max_total=session_max,
+                session_ttl_seconds=session_ttl,
             )
         )
 
@@ -190,7 +237,31 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
         raise ConfigError(f"{PREFIX}SESSION_MAX_TOTAL must be positive")
 
     keywords = _parse_keywords(env.get(PREFIX + "SESSION_RESET_KEYWORDS"))
-    groups = _parse_groups(env, max_total)
+
+    source = (env.get(PREFIX + "CONFIG_SOURCE") or SOURCE_ENV).strip().lower()
+    if source not in (SOURCE_ENV, SOURCE_DATABASE):
+        raise ConfigError(f"{PREFIX}CONFIG_SOURCE must be 'env' or 'database'")
+
+    database_url = (env.get(PREFIX + "DATABASE_URL") or "").strip()
+    if source == SOURCE_DATABASE and not database_url:
+        raise ConfigError(
+            f"{PREFIX}DATABASE_URL is required when "
+            f"{PREFIX}CONFIG_SOURCE is 'database'"
+        )
+
+    reload_interval = _float_env(
+        env, "DB_RELOAD_INTERVAL_SECONDS", DEFAULT_DB_RELOAD_INTERVAL_SECONDS
+    )
+    if reload_interval <= 0:
+        raise ConfigError(f"{PREFIX}DB_RELOAD_INTERVAL_SECONDS must be positive")
+    reload_interval = max(reload_interval, _MIN_DB_RELOAD_INTERVAL_SECONDS)
+
+    # In database mode group variables are not parsed at all (stale entries in
+    # a migrated .env must not break startup); groups come from the database.
+    if source == SOURCE_DATABASE:
+        groups = []
+    else:
+        groups = _parse_groups(env, max_total)
 
     return Config(
         dify_base_url=base_url,
@@ -198,4 +269,7 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
         session_max_total=max_total,
         reset_keywords=keywords,
         groups=groups,
+        config_source=source,
+        database_url=database_url,
+        db_reload_interval_seconds=reload_interval,
     )

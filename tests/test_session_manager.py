@@ -1,5 +1,7 @@
 """Tests for per-group session pools (TTL, cap eviction, reset)."""
 
+import pytest
+
 from src.config import Config, GroupConfig
 from src.session_manager import GroupPool, SessionManager
 
@@ -130,3 +132,100 @@ def test_session_manager_isolates_groups():
 
     manager.reset("group-b", "wx_alice")
     assert manager.size() == 1  # only group-a's session survives
+
+
+# -- runtime mutation (database mode) ------------------------------------------
+
+
+def _group(name, ttl=None, max_total=200):
+    return GroupConfig(
+        index=1,
+        name=name,
+        wecom_robot_id="bot-1",
+        wecom_robot_secret="sec-1",
+        dify_api_key="app-1",
+        session_max_total=max_total,
+        session_ttl_seconds=ttl,
+    )
+
+
+def test_explicit_groups_and_ttl_override():
+    config = _config(ttl=300)
+    groups = [_group("g1", ttl=60), _group("g2")]
+    manager = SessionManager(config, groups)
+
+    clock = FakeClock()
+    manager._pools["g1"]._clock = clock  # direct access for the TTL assertion
+
+    manager.get_or_create("g1", "wx_a")
+    clock.advance(61)  # past the group override (60), before global (300)
+    manager.sweep_expired()
+    assert manager.size() == 0
+
+
+def test_ensure_pool_is_noop_when_present():
+    config = _config()
+    manager = SessionManager(config)
+    manager.ensure_pool(config.groups[0], config.session_ttl_seconds)
+    manager.get_or_create("group-1", "wx_a")
+
+    # Re-ensuring must not recreate the pool (sessions survive).
+    manager.ensure_pool(config.groups[0], config.session_ttl_seconds)
+    assert manager.size() == 1
+
+
+def test_ensure_pool_creates_with_group_ttl_override():
+    config = _config(ttl=300)
+    manager = SessionManager(config, groups=[])
+    manager.ensure_pool(_group("g1", ttl=60), config.session_ttl_seconds)
+
+    clock = FakeClock()
+    manager._pools["g1"]._clock = clock
+    manager.get_or_create("g1", "wx_a")
+    clock.advance(61)
+    manager.sweep_expired()
+    assert manager.size() == 0
+
+
+def test_update_pool_changes_ttl_and_max_in_place():
+    config = _config()
+    manager = SessionManager(config)
+    clock = FakeClock()
+    manager._pools["group-1"]._clock = clock
+
+    manager.get_or_create("group-1", "wx_a")
+    manager.get_or_create("group-1", "wx_b")
+    session = manager.get_or_create("group-1", "wx_a")
+
+    manager.update_pool(
+        _group("group-1", ttl=10, max_total=1), config.session_ttl_seconds
+    )
+
+    # Same session object survived (in-place, not recreated).
+    assert manager.get_or_create("group-1", "wx_a") is session
+    # Cap shrink evicted the LRU entry (wx_b).
+    assert "wx_b" not in manager._pools["group-1"]
+
+    # New TTL applies: 11s idle expires the session.
+    clock.advance(11)
+    manager.sweep_expired()
+    assert manager.size() == 0
+
+
+def test_update_pool_unknown_group_raises():
+    config = _config()
+    manager = SessionManager(config)
+    with pytest.raises(KeyError):
+        manager.update_pool(_group("missing"), config.session_ttl_seconds)
+
+
+def test_remove_pool_drops_sessions():
+    config = _config()
+    manager = SessionManager(config)
+    manager.get_or_create("group-1", "wx_a")
+    assert manager.size() == 1
+
+    manager.remove_pool("group-1")
+    assert manager.size() == 0
+    with pytest.raises(KeyError):
+        manager.get_or_create("group-1", "wx_a")

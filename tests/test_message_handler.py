@@ -16,6 +16,7 @@ from src.dify_client import (
     DifyUploadedFile,
     MAX_IMAGE_FILE_BYTES,
 )
+from src.config_store import GroupStore
 from src.message_handler import MessageHandler
 from src.session_manager import SessionManager
 
@@ -259,3 +260,43 @@ async def test_reset_keyword_with_attachment_still_forwards():
     assert dify.calls[0]["query"] == "开启新对话"  # text used, not the default
     assert len(dify.calls[0]["files"]) == 1
     assert sessions.size() == 1  # no reset happened
+
+
+# -- runtime group store -------------------------------------------------------
+
+
+async def test_unknown_group_returns_error_reply():
+    dify = RecordingDifyClient(results=[DifyStreamResult(answer="done")])
+    handler, _ = _handler(_config(), dify)
+
+    reply = await handler.handle("removed-group", "zhangsan", "你好")
+
+    assert reply == ERROR_REPLY
+    assert dify.calls == []
+
+
+async def test_handler_uses_updated_dify_key_from_store():
+    dify = RecordingDifyClient(
+        results=[DifyStreamResult(answer="a"), DifyStreamResult(answer="b")]
+    )
+    config = _config()
+    sessions = SessionManager(config)
+    store = GroupStore.from_config(config)
+    handler = MessageHandler(config, sessions, dify, store)
+
+    await handler.handle("group-1", "zhangsan", "hi")
+    assert dify.calls[0]["api_key"] == "app-1"
+
+    # Same group name, new Dify key: effective on the very next message.
+    store.put(
+        GroupConfig(
+            index=1,
+            name="group-1",
+            wecom_robot_id="bot-1",
+            wecom_robot_secret="sec-1",
+            dify_api_key="app-rotated",
+            session_max_total=200,
+        )
+    )
+    await handler.handle("group-1", "zhangsan", "hi again")
+    assert dify.calls[1]["api_key"] == "app-rotated"
