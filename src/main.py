@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import logging.handlers
+import os
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .config import Config, ConfigError, load_config
+from .config import PREFIX, SOURCE_DATABASE, Config, ConfigError, load_config
+from .config_store import GroupStore
 from .dify_client import DifyClient
+from .group_manager import GroupManager, reconcile_loop
+from .db_config import GroupDefaults, GroupRepository, rows_to_desired
 from .message_handler import MessageHandler
 from .session_manager import SessionManager
 from .wecom_client import WeComClient
@@ -47,6 +52,13 @@ def setup_logging(log_dir: Path = Path("logs")) -> None:
 
 
 async def _run(config: Config) -> None:
+    if config.config_source == SOURCE_DATABASE:
+        await _run_database(config)
+    else:
+        await _run_env(config)
+
+
+async def _run_env(config: Config) -> None:
     dify_client = DifyClient(config.dify_base_url)
     try:
         session_manager = SessionManager(config)
@@ -82,6 +94,81 @@ async def _run(config: Config) -> None:
         raise
 
 
+def _has_env_group_vars() -> bool:
+    return any(key.startswith(f"{PREFIX}GROUP_") for key in os.environ)
+
+
+async def _run_database(config: Config) -> None:
+    dify_client = DifyClient(config.dify_base_url)
+    repo = GroupRepository(config.database_url)
+    try:
+        logger.info("Connecting to group configuration database")
+        await repo.connect()
+
+        if _has_env_group_vars():
+            logger.warning(
+                "Database config source is active; "
+                "WECOM_FORWARD_PLUS_GROUP_* environment variables are ignored"
+            )
+
+        defaults = GroupDefaults(
+            session_ttl_seconds=config.session_ttl_seconds,
+            session_max_total=config.session_max_total,
+        )
+        desired = rows_to_desired(await repo.list_rows(), defaults)
+        if not desired:
+            logger.warning(
+                "No enabled groups configured in the database yet; "
+                "groups inserted later are hot-loaded automatically"
+            )
+
+        store = GroupStore(desired)
+        session_manager = SessionManager(config, list(desired.values()))
+        message_handler = MessageHandler(config, session_manager, dify_client, store)
+        manager = GroupManager(
+            handler=message_handler,
+            sessions=session_manager,
+            store=store,
+            global_ttl=config.session_ttl_seconds,
+            client_factory=WeComClient,
+        )
+        await manager.apply(desired)
+        logger.info("Started %d WeCom client(s)", len(manager.live_group_names))
+
+        # Optional background sweeper to proactively drop expired sessions.
+        session_manager.start_sweeper(
+            interval=max(30.0, config.session_ttl_seconds / 2)
+        )
+
+        stop_event = asyncio.Event()
+        reload_event = asyncio.Event()
+        reload_task = asyncio.create_task(
+            reconcile_loop(
+                repo,
+                manager,
+                defaults,
+                config.db_reload_interval_seconds,
+                stop_event,
+                reload_event,
+            )
+        )
+
+        try:
+            await stop_event.wait()
+        finally:
+            reload_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reload_task
+            await manager.shutdown()
+            await repo.close()
+            await dify_client.close()
+    except Exception:
+        await dify_client.close()
+        with contextlib.suppress(Exception):
+            await repo.close()
+        raise
+
+
 def main() -> None:
     load_dotenv()
 
@@ -92,14 +179,24 @@ def main() -> None:
         sys.exit(1)
 
     setup_logging()
-    logger.info(
-        "wecom-forward-plus starting with %d group(s)", len(config.groups)
-    )
+    if config.config_source == SOURCE_DATABASE:
+        logger.info("wecom-forward-plus starting (config source: database)")
+    else:
+        logger.info(
+            "wecom-forward-plus starting with %d group(s)", len(config.groups)
+        )
 
     try:
         asyncio.run(_run(config))
     except KeyboardInterrupt:
         logger.info("Interrupted; shutting down")
+    except SystemExit:
+        raise
+    except Exception as exc:
+        # Startup failures (database unreachable, admin port in use, ...):
+        # report cleanly and let the Docker restart policy retry.
+        logger.error("Startup failed: %s", exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,11 @@
 # Dockerfile COPY paths are relative to the repo root. Configuration is
 # injected via `env_file`; the container does not need a copy of `.env`
 # inside it. Rotating logs are written to ../logs on the host.
+#
+# The optional `postgres` service below serves the runtime group
+# configuration (CONFIG_SOURCE=database in .env). Delete the service and the
+# `depends_on` block if you point WECOM_FORWARD_PLUS_DATABASE_URL at an
+# external PostgreSQL instance instead.
 
 services:
   wecom-forward-plus:
@@ -22,3 +27,25 @@ services:
     volumes:
       # Persist rotating log files (logs/app.log) to the host.
       - ../logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: wecom-forward-plus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wecom
+      POSTGRES_PASSWORD: ${WECOM_POSTGRES_PASSWORD:?set WECOM_POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: wecom
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wecom -d wecom"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

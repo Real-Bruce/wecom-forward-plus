@@ -23,6 +23,9 @@ Dify  <=>  wecom-forward-plus  <=>  企业微信机器人
 src/
 ├── main.py               Entry point: load config, logging, start one client per group
 ├── config.py             Parse + validate WECOM_FORWARD_PLUS_* environment variables
+├── config_store.py       Mutable in-process group registry (hot-reload seam)
+├── db_config.py          PostgreSQL groups table: repository + row mapping/validation/diff
+├── group_manager.py      Live WeCom client per group + database reconcile loop
 ├── session_manager.py    Per-group session pools (TTL + cap + LRU eviction + reset)
 ├── dify_client.py        Async Dify chat-messages client (streaming) + file upload + SSE parsing
 ├── wecom_client.py       Wrapper around wecom-aibot-python-sdk (long connection + media download)
@@ -111,8 +114,64 @@ All settings are read from environment variables (loaded from `.env` via python-
 | `WECOM_FORWARD_PLUS_GROUP_{N}_DIFY_API_KEY` | ✅ (per group) | — | Dify app API key |
 | `WECOM_FORWARD_PLUS_GROUP_{N}_SESSION_MAX_TOTAL` | — | global default | Per-group override of the session cap |
 | `WECOM_FORWARD_PLUS_GROUP_{N}_SESSION_TTL_SECONDS` | — | global default | Per-group override of the conversation TTL |
+| `WECOM_FORWARD_PLUS_CONFIG_SOURCE` | — | `env` | Where group configuration comes from: `env` (variables) or `database` (PostgreSQL; see [below](#runtime-group-configuration-postgresql)) |
+| `WECOM_FORWARD_PLUS_DATABASE_URL` | ✅ when `CONFIG_SOURCE=database` | — | PostgreSQL DSN, e.g. `postgresql://user:password@localhost:5432/wecom` (never logged) |
+| `WECOM_FORWARD_PLUS_DB_RELOAD_INTERVAL_SECONDS` | — | `30` | How often the running process re-reads group configuration from the database (minimum 5) |
 
 Group indices start at 1 and must be contiguous. Each group requires `WECOM_ROBOT_ID`, `WECOM_ROBOT_SECRET`, and `DIFY_API_KEY` together; an incomplete group fails startup with exit code 1.
+
+With `CONFIG_SOURCE=database` the `GROUP_` variables are not parsed at all — group configuration is read from the database (see below), so stale entries left in `.env` after a migration cannot break startup.
+
+## Runtime group configuration (PostgreSQL)
+
+Setting `WECOM_FORWARD_PLUS_CONFIG_SOURCE=database` moves group management into a PostgreSQL table. The two sources are strictly either/or: nothing is ever imported from `.env` into the database, and `GROUP_` variables are ignored while database mode is active.
+
+The table is created automatically on startup:
+
+```sql
+CREATE TABLE IF NOT EXISTS groups (
+    id                  SERIAL PRIMARY KEY,
+    name                TEXT NOT NULL UNIQUE,
+    wecom_robot_id      TEXT NOT NULL,
+    wecom_robot_secret  TEXT NOT NULL,
+    dify_api_key        TEXT NOT NULL,
+    session_max_total   INTEGER,          -- NULL = global default
+    session_ttl_seconds INTEGER,          -- NULL = global default
+    enabled             BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+Add your first group directly in SQL:
+
+```sql
+INSERT INTO groups (name, wecom_robot_id, wecom_robot_secret, dify_api_key)
+VALUES ('sales', 'your-robot-id', 'your-robot-secret', 'app-your-dify-key');
+```
+
+### Hot reload semantics
+
+The running process re-reads the table every `DB_RELOAD_INTERVAL_SECONDS` (default 30) and converges without a restart:
+
+| Change | Effect |
+| --- | --- |
+| New row (`enabled = true`) | A WeCom client for that group connects within one interval |
+| `enabled = false` or `DELETE` | The group's client disconnects; its sessions are dropped |
+| `wecom_robot_id` / `wecom_robot_secret` changed | That group's client restarts (its sessions are kept) |
+| `dify_api_key` changed | Takes effect on the next message — no reconnect |
+| `session_max_total` / `session_ttl_seconds` changed | Applied in place; live sessions survive |
+
+- An empty table is a legal state: the process starts with 0 clients and hot-loads groups as they are inserted.
+- If the database becomes unreachable, the process keeps running with the last-known configuration and retries every cycle.
+- If the database is unreachable at startup, the process exits with code 1 (the Docker `restart` policy then retries).
+- A group whose WeCom connection keeps failing is retried on every cycle until it connects or is removed.
+
+Global settings (`DIFY_BASE_URL`, reset keywords, the session defaults the nullable columns fall back to) remain environment-only; only per-group values live in the database.
+
+Secrets are stored in plaintext — the process environment already holds equivalent credentials, so application-side encryption would only relocate them. Restrict the database user to this table, keep the database on a private network, and rely on the never-log rule: neither the DSN nor any credential value is ever written to logs.
+
+See [docs/connect-postgres.md](docs/connect-postgres.md) for setup, SQL examples, and Docker Compose instructions.
 
 ## Run
 
