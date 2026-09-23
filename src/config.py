@@ -18,7 +18,10 @@ exit with a clear message before connecting to anything.
 ``WECOM_FORWARD_PLUS_CONFIG_SOURCE`` selects where group configuration comes
 from: ``env`` (the default, variables as above) or ``database`` (groups are
 read from PostgreSQL and ``GROUP_`` variables are not parsed at all). In
-``database`` mode ``WECOM_FORWARD_PLUS_DATABASE_URL`` is required.
+``database`` mode ``WECOM_FORWARD_PLUS_DATABASE_URL`` is required, and the
+admin web UI variables become meaningful: ``ADMIN_PASSWORD`` (login),
+``ADMIN_BIND`` / ``ADMIN_PORT`` (listen address), ``ADMIN_UI`` (on/off) and
+``ADMIN_COOKIE_SECURE`` (enable when TLS-terminated in front).
 """
 
 from __future__ import annotations
@@ -41,8 +44,14 @@ DEFAULT_DB_RELOAD_INTERVAL_SECONDS = 30.0
 # Never reconcile faster than this, whatever the configuration says.
 _MIN_DB_RELOAD_INTERVAL_SECONDS = 5.0
 
+DEFAULT_ADMIN_BIND = "127.0.0.1"
+DEFAULT_ADMIN_PORT = 8080
+
 # Stop scanning group indices at this upper bound.
 _MAX_GROUP_INDEX = 1000
+
+_ON_VALUES = ("on", "true")
+_OFF_VALUES = ("off", "false")
 
 
 class ConfigError(Exception):
@@ -78,6 +87,11 @@ class Config:
     config_source: str = SOURCE_ENV
     database_url: str = ""
     db_reload_interval_seconds: float = DEFAULT_DB_RELOAD_INTERVAL_SECONDS
+    admin_ui_enabled: bool = True
+    admin_password: str = ""
+    admin_bind: str = DEFAULT_ADMIN_BIND
+    admin_port: int = DEFAULT_ADMIN_PORT
+    admin_cookie_secure: bool = False
 
     def get_group(self, group_id: str) -> GroupConfig:
         for group in self.groups:
@@ -105,6 +119,18 @@ def _float_env(env: Mapping[str, str], suffix: str, default: float) -> float:
     if raw is None or str(raw).strip() == "":
         return default
     return _parse_float(raw, PREFIX + suffix)
+
+
+def _bool_env(env: Mapping[str, str], suffix: str, default: bool) -> bool:
+    raw = env.get(PREFIX + suffix)
+    if raw is None or str(raw).strip() == "":
+        return default
+    value = str(raw).strip().lower()
+    if value in _ON_VALUES:
+        return True
+    if value in _OFF_VALUES:
+        return False
+    raise ConfigError(f"{PREFIX}{suffix} must be 'on' or 'off'")
 
 
 def _int_env(env: Mapping[str, str], suffix: str, default: int) -> int:
@@ -263,6 +289,19 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
     else:
         groups = _parse_groups(env, max_total)
 
+    admin_ui_enabled = _bool_env(env, "ADMIN_UI", True)
+    admin_password = env.get(PREFIX + "ADMIN_PASSWORD") or ""
+    if source == SOURCE_DATABASE and admin_ui_enabled and not admin_password:
+        raise ConfigError(
+            f"{PREFIX}ADMIN_PASSWORD is required when the admin UI is enabled "
+            f"(CONFIG_SOURCE=database); set it or turn {PREFIX}ADMIN_UI off"
+        )
+    admin_bind = (env.get(PREFIX + "ADMIN_BIND") or DEFAULT_ADMIN_BIND).strip()
+    admin_port = _int_env(env, "ADMIN_PORT", DEFAULT_ADMIN_PORT)
+    if not 0 < admin_port < 65536:
+        raise ConfigError(f"{PREFIX}ADMIN_PORT must be a valid port number")
+    admin_cookie_secure = _bool_env(env, "ADMIN_COOKIE_SECURE", False)
+
     return Config(
         dify_base_url=base_url,
         session_ttl_seconds=ttl,
@@ -272,4 +311,9 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
         config_source=source,
         database_url=database_url,
         db_reload_interval_seconds=reload_interval,
+        admin_ui_enabled=admin_ui_enabled,
+        admin_password=admin_password,
+        admin_bind=admin_bind,
+        admin_port=admin_port,
+        admin_cookie_secure=admin_cookie_secure,
     )

@@ -26,11 +26,13 @@ src/
 ├── config_store.py       Mutable in-process group registry (hot-reload seam)
 ├── db_config.py          PostgreSQL groups table: repository + row mapping/validation/diff
 ├── group_manager.py      Live WeCom client per group + database reconcile loop
+├── admin_server.py       Authenticated admin web UI over the groups table
 ├── session_manager.py    Per-group session pools (TTL + cap + LRU eviction + reset)
 ├── dify_client.py        Async Dify chat-messages client (streaming) + file upload + SSE parsing
 ├── wecom_client.py       Wrapper around wecom-aibot-python-sdk (long connection + media download)
 ├── message_handler.py    Routes WeCom message -> session -> Dify -> reply text
 ├── attachment.py         Immutable description of one downloaded media item
+├── web/static/           Admin UI single page (HTML + vanilla JS + CSS, no build step)
 └── constants.py          Fixed user-facing reply strings
 ```
 
@@ -117,6 +119,11 @@ All settings are read from environment variables (loaded from `.env` via python-
 | `WECOM_FORWARD_PLUS_CONFIG_SOURCE` | — | `env` | Where group configuration comes from: `env` (variables) or `database` (PostgreSQL; see [below](#runtime-group-configuration-postgresql)) |
 | `WECOM_FORWARD_PLUS_DATABASE_URL` | ✅ when `CONFIG_SOURCE=database` | — | PostgreSQL DSN, e.g. `postgresql://user:password@localhost:5432/wecom` (never logged) |
 | `WECOM_FORWARD_PLUS_DB_RELOAD_INTERVAL_SECONDS` | — | `30` | How often the running process re-reads group configuration from the database (minimum 5) |
+| `WECOM_FORWARD_PLUS_ADMIN_UI` | — | `on` | Admin web UI on/off (database mode only; see [below](#admin-web-ui)) |
+| `WECOM_FORWARD_PLUS_ADMIN_PASSWORD` | ✅ when `CONFIG_SOURCE=database` and UI on | — | Admin login password (never logged) |
+| `WECOM_FORWARD_PLUS_ADMIN_BIND` | — | `127.0.0.1` | Address the admin UI listens on |
+| `WECOM_FORWARD_PLUS_ADMIN_PORT` | — | `8080` | Port the admin UI listens on |
+| `WECOM_FORWARD_PLUS_ADMIN_COOKIE_SECURE` | — | `off` | Add the `Secure` cookie flag (enable when TLS-terminated in front) |
 
 Group indices start at 1 and must be contiguous. Each group requires `WECOM_ROBOT_ID`, `WECOM_ROBOT_SECRET`, and `DIFY_API_KEY` together; an incomplete group fails startup with exit code 1.
 
@@ -172,6 +179,24 @@ Global settings (`DIFY_BASE_URL`, reset keywords, the session defaults the nulla
 Secrets are stored in plaintext — the process environment already holds equivalent credentials, so application-side encryption would only relocate them. Restrict the database user to this table, keep the database on a private network, and rely on the never-log rule: neither the DSN nor any credential value is ever written to logs.
 
 See [docs/connect-postgres.md](docs/connect-postgres.md) for setup, SQL examples, and Docker Compose instructions.
+
+## Admin web UI
+
+In database mode the process serves a built-in admin page (no Node/npm build step, plain aiohttp) for maintaining the groups table: create, edit, delete and enable/disable groups without writing SQL. It is on by default (`ADMIN_UI=off` disables it) and requires a login with `WECOM_FORWARD_PLUS_ADMIN_PASSWORD`.
+
+Open `http://127.0.0.1:8080` (or your `ADMIN_BIND`/`ADMIN_PORT`) and log in:
+
+- The table shows every group: name, enabled toggle, robot id, **masked** robot secret and Dify API key, session parameters (inherited values are shown in italics), and the last update time.
+- "新增配置组" opens a form with all fields; session fields left empty inherit the global defaults.
+- Editing an existing group leaves the secret fields blank — **blank means "keep the stored value"**; fill one in only to rotate it.
+- Toggling 启用 or saving a change takes effect immediately (within one database round-trip), not on the 30-second reload cycle.
+
+Security notes:
+
+- Sessions are in-memory cookies (HttpOnly, SameSite=Strict), 8h expiry, lost on restart. Failed logins are rate-limited globally (5 failures per 10 minutes → 60s lockout).
+- Mutating API calls with a body require a JSON content type, which (with SameSite=Strict) blocks cross-site form posts.
+- The UI speaks plain HTTP: keep the default `127.0.0.1` binding and reach it through an SSH tunnel or a TLS-terminating reverse proxy; set `ADMIN_COOKIE_SECURE=on` behind TLS.
+- A port conflict at startup fails the process (exit code 1) rather than running half-broken.
 
 ## Run
 

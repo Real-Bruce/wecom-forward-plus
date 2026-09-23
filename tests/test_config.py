@@ -162,10 +162,62 @@ def _db_env(**overrides):
         **{
             "WECOM_FORWARD_PLUS_CONFIG_SOURCE": "database",
             "WECOM_FORWARD_PLUS_DATABASE_URL": "postgresql://user:pw@localhost:5432/wfp",
+            "WECOM_FORWARD_PLUS_ADMIN_PASSWORD": "admin-pw",
         }
     )
     env.update(overrides)
     return env
+
+
+# -- admin UI variables ------------------------------------------------------------
+
+
+def test_admin_password_required_in_database_mode():
+    env = _db_env()
+    del env["WECOM_FORWARD_PLUS_ADMIN_PASSWORD"]
+    with pytest.raises(ConfigError, match="ADMIN_PASSWORD is required"):
+        load_config(env)
+
+
+def test_admin_password_not_required_when_ui_off():
+    env = _db_env()
+    del env["WECOM_FORWARD_PLUS_ADMIN_PASSWORD"]
+    env["WECOM_FORWARD_PLUS_ADMIN_UI"] = "off"
+    config = load_config(env)
+    assert config.admin_ui_enabled is False
+
+
+def test_admin_password_not_required_in_env_mode():
+    # env mode never starts the UI, so no password is demanded.
+    config = load_config(_env())
+    assert config.admin_ui_enabled is True
+    assert config.admin_password == ""
+
+
+def test_admin_vars_parsed():
+    config = load_config(
+        _db_env(
+            **{
+                "WECOM_FORWARD_PLUS_ADMIN_BIND": "0.0.0.0",
+                "WECOM_FORWARD_PLUS_ADMIN_PORT": "9090",
+                "WECOM_FORWARD_PLUS_ADMIN_COOKIE_SECURE": "on",
+            }
+        )
+    )
+    assert config.admin_bind == "0.0.0.0"
+    assert config.admin_port == 9090
+    assert config.admin_cookie_secure is True
+    assert config.admin_password == "admin-pw"
+
+
+def test_invalid_admin_ui_value():
+    with pytest.raises(ConfigError, match="ADMIN_UI must be 'on' or 'off'"):
+        load_config(_db_env(**{"WECOM_FORWARD_PLUS_ADMIN_UI": "maybe"}))
+
+
+def test_invalid_admin_port():
+    with pytest.raises(ConfigError, match="ADMIN_PORT"):
+        load_config(_db_env(**{"WECOM_FORWARD_PLUS_ADMIN_PORT": "99999"}))
 
 
 def test_database_source_skips_env_groups():

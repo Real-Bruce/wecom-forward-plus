@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wecom-forward-plus 管理台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>wecom-forward-plus <span class="sub">配置组管理</span></h1>
+    <button id="logout-btn" class="ghost" hidden>登出</button>
+  </header>
+
+  <section id="login-section" hidden>
+    <form id="login-form" class="card">
+      <label for="password">管理密码</label>
+      <input type="password" id="password" autocomplete="current-password" required>
+      <p id="login-error" class="error" hidden></p>
+      <button type="submit">登录</button>
+    </form>
+  </section>
+
+  <section id="main-section" hidden>
+    <div class="toolbar">
+      <button id="add-group-btn">新增配置组</button>
+      <span id="defaults-note" class="muted"></span>
+    </div>
+    <table id="groups-table">
+      <thead>
+        <tr>
+          <th>名称</th>
+          <th>启用</th>
+          <th>机器人 ID</th>
+          <th>机器人 Secret</th>
+          <th>Dify Key</th>
+          <th>会话上限</th>
+          <th>TTL(秒)</th>
+          <th>更新时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="groups-body"></tbody>
+    </table>
+    <p id="table-error" class="error" hidden></p>
+  </section>
+
+  <dialog id="group-dialog">
+    <form id="group-form" method="dialog">
+      <h2 id="dialog-title">新增配置组</h2>
+      <label>名称 <input name="name" required maxlength="100"></label>
+      <label>机器人 ID <input name="wecom_robot_id"></label>
+      <label>机器人 Secret <input type="password" name="wecom_robot_secret"
+        placeholder="留空表示保持不变" autocomplete="new-password"></label>
+      <label>Dify API Key <input type="password" name="dify_api_key"
+        placeholder="留空表示保持不变" autocomplete="new-password"></label>
+      <label>会话上限 <input type="number" min="1" name="session_max_total"
+        placeholder="留空继承全局默认"></label>
+      <label>TTL 秒数 <input type="number" min="1" name="session_ttl_seconds"
+        placeholder="留空继承全局默认"></label>
+      <label class="inline"><input type="checkbox" name="enabled" checked> 启用</label>
+      <p id="form-error" class="error" hidden></p>
+      <div class="actions">
+        <button type="submit" class="primary">保存</button>
+        <button type="button" id="cancel-btn" class="ghost">取消</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

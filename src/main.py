@@ -17,6 +17,7 @@ from .config_store import GroupStore
 from .dify_client import DifyClient
 from .group_manager import GroupManager, reconcile_loop
 from .db_config import GroupDefaults, GroupRepository, rows_to_desired
+from .admin_server import AdminServer
 from .message_handler import MessageHandler
 from .session_manager import SessionManager
 from .wecom_client import WeComClient
@@ -153,12 +154,38 @@ async def _run_database(config: Config) -> None:
             )
         )
 
+        admin = None
+        if config.admin_ui_enabled:
+            admin = AdminServer(
+                repo=repo,
+                password=config.admin_password,
+                request_reload=reload_event.set,
+                defaults=defaults,
+                bind=config.admin_bind,
+                port=config.admin_port,
+                cookie_secure=config.admin_cookie_secure,
+            )
+            try:
+                await admin.start()
+            except OSError:
+                logger.error(
+                    "Admin UI cannot listen on %s:%d (port in use?)",
+                    config.admin_bind,
+                    config.admin_port,
+                )
+                raise
+            logger.info(
+                "Admin UI listening on http://%s:%d", config.admin_bind, config.admin_port
+            )
+
         try:
             await stop_event.wait()
         finally:
             reload_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reload_task
+            if admin is not None:
+                await admin.stop()
             await manager.shutdown()
             await repo.close()
             await dify_client.close()
