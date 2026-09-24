@@ -1,0 +1,20 @@
+# Repository-root entry point for Docker Compose.
+#
+# The service definitions live in docker/docker-compose.yml; this file only
+# includes them so that Compose's PROJECT DIRECTORY is the repository root.
+# That matters because Compose reads the .env it uses for ${VAR} interpolation
+# from the project directory. With the compose file alone under docker/,
+# running `cd docker && docker compose ...` makes the project directory docker/
+# and Compose looks for docker/.env — but the project .env (copied from
+# .env.example) lives at the repository root. The result is
+# "required variable WECOM_POSTGRES_PASSWORD is missing a value" even though
+# it is set in .env. (env_file: ../.env only injects vars into the running
+# container; it does not feed interpolation.)
+#
+# Run from the repository root:
+#     cp .env.example .env   # then fill in real values
+#     docker compose up -d --build
+#     docker compose logs -f
+#     docker compose down
+include:
+  - path: docker/docker-compose.yml

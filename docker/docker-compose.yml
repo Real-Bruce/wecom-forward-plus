@@ -1,8 +1,13 @@
 # Run wecom-forward-plus on a server.
 #
 # Copy `.env.example` to `.env` in the repository root and fill in real
-# values, then from this directory:
+# values, then from the REPOSITORY ROOT (not this directory):
 #     docker compose up -d --build
+#
+# The repository-root compose.yaml includes this file; that root file is what
+# makes the project directory the repository root, so Compose loads the root
+# .env for ${VAR} interpolation (WECOM_POSTGRES_PASSWORD). Run directly from
+# docker/ instead and that interpolation var will be reported missing.
 #
 # The build context is the repository root (parent of this directory), so
 # Dockerfile COPY paths are relative to the repo root. Configuration is
