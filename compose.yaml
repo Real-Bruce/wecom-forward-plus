@@ -2,14 +2,14 @@
 #
 # The service definitions live in docker/docker-compose.yml; this file only
 # includes them so that Compose's PROJECT DIRECTORY is the repository root.
-# That matters because Compose reads the .env it uses for ${VAR} interpolation
-# from the project directory. With the compose file alone under docker/,
-# running `cd docker && docker compose ...` makes the project directory docker/
-# and Compose looks for docker/.env — but the project .env (copied from
-# .env.example) lives at the repository root. The result is
-# "required variable WECOM_POSTGRES_PASSWORD is missing a value" even though
-# it is set in .env. (env_file: ../.env only injects vars into the running
-# container; it does not feed interpolation.)
+# That matters because ${VAR} interpolation (the admin-UI publish host and
+# port in docker/docker-compose.yml) reads the .env from the project
+# directory. Running `cd docker && docker compose ...` instead makes the
+# project directory docker/, the root .env is not loaded, and a custom
+# WECOM_FORWARD_PLUS_ADMIN_PORT would silently fall back to the default.
+# (The PostgreSQL password is not affected: the postgres service reads it
+# from ../.env via env_file, which resolves relative to the compose file
+# and works from any invocation directory.)
 #
 # Run from the repository root:
 #     cp .env.example .env   # then fill in real values

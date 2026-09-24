@@ -102,7 +102,7 @@ database 模式默认启用内置管理界面，浏览器打开 `http://127.0.0.
 
 ```
 WECOM_FORWARD_PLUS_CONFIG_SOURCE=database
-WECOM_POSTGRES_PASSWORD=<设置一个密码>
+POSTGRES_PASSWORD=<设置一个密码>
 WECOM_FORWARD_PLUS_DATABASE_URL=postgresql://wecom:<密码>@postgres:5432/wecom
 ```
 
