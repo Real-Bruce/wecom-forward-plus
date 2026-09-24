@@ -91,7 +91,13 @@ database 模式默认启用内置管理界面，浏览器打开 `http://127.0.0.
 ## Docker Compose 部署
 
 `docker/docker-compose.yml` 已内置可选的 `postgres:16-alpine` 服务（带健康检查
-与 `pgdata` 数据卷），应用容器等数据库健康后启动。`.env` 中设置：
+与 `pgdata` 数据卷），应用容器等数据库健康后启动。数据库端口映射为宿主机
+`5772` → 容器 `5432`：应用容器内用 `postgres:5432` 访问，宿主机上用
+`127.0.0.1:5772` 连接（例如 `psql -h 127.0.0.1 -p 5772 -U wecom -d wecom`）。
+`groups` 表会自动创建——`docker/postgres-init.sql` 在数据卷首次初始化时执行
+（幂等的 `CREATE TABLE IF NOT EXISTS`），应用每次启动时也会执行同样的 DDL。
+
+`.env` 中设置：
 
 ```
 WECOM_FORWARD_PLUS_CONFIG_SOURCE=database
@@ -99,8 +105,8 @@ WECOM_POSTGRES_PASSWORD=<设置一个密码>
 WECOM_FORWARD_PLUS_DATABASE_URL=postgresql://wecom:<密码>@postgres:5432/wecom
 ```
 
-如需使用外部 PostgreSQL，删掉 compose 里的 `postgres` 服务与 `depends_on`
-块，把 `DATABASE_URL` 指向外部实例即可。
+如需使用外部 PostgreSQL，删掉 compose 里的 `postgres` 服务、`ports` 与
+`depends_on` 块，把 `DATABASE_URL` 指向外部实例即可。
 
 ## 安全注意事项
 

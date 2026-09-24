@@ -235,6 +235,8 @@ Then continue with [Deploy with Docker](#deploy-with-docker).
 
 All Docker files live in `docker/` (`Dockerfile`, `docker-compose.yml`, `Dockerfile.dockerignore`).
 
+The compose file also starts an optional bundled PostgreSQL 16 (for `CONFIG_SOURCE=database`): it is reachable as `postgres:5432` from the app container and published to the host on port **5772**. The `groups` table is created automatically — `docker/postgres-init.sql` runs when the data volume is first initialized, and the application itself runs `CREATE TABLE IF NOT EXISTS` on every startup. See [docs/connect-postgres.md](docs/connect-postgres.md).
+
 ```bash
 # 1. Provide configuration in the repository root (never committed)
 cp .env.example .env
