@@ -33,6 +33,17 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+    environment:
+      # Inside the container the admin UI must listen on all interfaces;
+      # the .env default 127.0.0.1 binds the container's own loopback and
+      # the published port below could never reach it. `environment`
+      # overrides `env_file`, so the .env value (if any) is ignored here.
+      WECOM_FORWARD_PLUS_ADMIN_BIND: 0.0.0.0
+    ports:
+      # Publish the admin web UI. Defaults to host loopback only — for
+      # remote access set WECOM_ADMIN_PUBLISH_HOST=0.0.0.0 in .env and put
+      # TLS / a reverse proxy (or an SSH tunnel) in front of it.
+      - "${WECOM_ADMIN_PUBLISH_HOST:-127.0.0.1}:${WECOM_FORWARD_PLUS_ADMIN_PORT:-8080}:${WECOM_FORWARD_PLUS_ADMIN_PORT:-8080}"
     volumes:
       # Persist rotating log files (logs/app.log) to the host.
       - ../logs:/app/logs

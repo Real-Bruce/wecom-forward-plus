@@ -184,7 +184,7 @@ See [docs/connect-postgres.md](docs/connect-postgres.md) for setup, SQL examples
 
 In database mode the process serves a built-in admin page (no Node/npm build step, plain aiohttp) for maintaining the groups table: create, edit, delete and enable/disable groups without writing SQL. It is on by default (`ADMIN_UI=off` disables it) and requires a login with `WECOM_FORWARD_PLUS_ADMIN_PASSWORD`.
 
-Open `http://127.0.0.1:8080` (or your `ADMIN_BIND`/`ADMIN_PORT`) and log in:
+Open `http://127.0.0.1:8080` (or your `ADMIN_BIND`/`ADMIN_PORT`) and log in. Under Docker the compose file overrides the in-container bind to `0.0.0.0` and publishes the UI to the host's `127.0.0.1` on the same `ADMIN_PORT`; set `WECOM_ADMIN_PUBLISH_HOST=0.0.0.0` in `.env` to expose it to the network (put TLS or a reverse proxy in front first):
 
 - The table shows every group: name, enabled toggle, robot id, **masked** robot secret and Dify API key, session parameters (inherited values are shown in italics), and the last update time.
 - "新增配置组" opens a form with all fields; session fields left empty inherit the global defaults.
@@ -254,6 +254,8 @@ docker compose restart
 ```
 
 Configuration is injected via compose's `env_file` (`.env` in the repository root); the image itself contains no secrets. The host directory `logs/` (repository root) is mounted at `/app/logs` so the rotating log file (`logs/app.log`) persists across container recreations. The container restarts automatically (`unless-stopped`) unless explicitly stopped.
+
+In database mode the admin UI is reachable at `http://127.0.0.1:8080` on the host (compose overrides the in-container bind to `0.0.0.0` and publishes the port on host loopback). To expose it to the network, set `WECOM_ADMIN_PUBLISH_HOST=0.0.0.0` in `.env` and front it with TLS or a reverse proxy; to change the port, set `WECOM_FORWARD_PLUS_ADMIN_PORT` — the host and container ports follow it automatically.
 
 ## Tests
 

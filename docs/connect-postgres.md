@@ -60,7 +60,8 @@ VALUES ('sales', '机器人ID', '机器人Secret', 'app-xxx');
 
 database 模式默认启用内置管理界面，浏览器打开 `http://127.0.0.1:8080`，用
 `WECOM_FORWARD_PLUS_ADMIN_PASSWORD` 登录后在表格里直接新建组。详见 README 的
-「管理界面」章节。
+「管理界面」章节。Docker 部署时同样在 `http://127.0.0.1:8080` 访问（见下方
+「Docker Compose 部署」的端口说明）。
 
 ## 日常运维操作
 
@@ -107,6 +108,11 @@ WECOM_FORWARD_PLUS_DATABASE_URL=postgresql://wecom:<密码>@postgres:5432/wecom
 
 如需使用外部 PostgreSQL，删掉 compose 里的 `postgres` 服务、`ports` 与
 `depends_on` 块，把 `DATABASE_URL` 指向外部实例即可。
+
+管理网页在容器内始终监听 `0.0.0.0`（compose 覆盖了 `.env` 里的
+`ADMIN_BIND`），并发布到宿主机 `127.0.0.1` 的同号端口（默认
+`http://127.0.0.1:8080`，跟随 `ADMIN_PORT`）。需要从外部网络访问时，在
+`.env` 中设置 `WECOM_ADMIN_PUBLISH_HOST=0.0.0.0` 并置于 TLS / 反向代理之后。
 
 ## 安全注意事项
 
