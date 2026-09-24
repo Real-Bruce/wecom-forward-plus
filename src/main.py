@@ -161,6 +161,7 @@ async def _run_database(config: Config) -> None:
                 password=config.admin_password,
                 request_reload=reload_event.set,
                 defaults=defaults,
+                dify_base_url=config.dify_base_url,
                 bind=config.admin_bind,
                 port=config.admin_port,
                 cookie_secure=config.admin_cookie_secure,

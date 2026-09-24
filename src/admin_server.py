@@ -122,6 +122,7 @@ class AdminServer:
         password: str,
         request_reload: Callable[[], None],
         defaults: GroupDefaults,
+        dify_base_url: str,
         bind: str = "127.0.0.1",
         port: int = 8080,
         cookie_secure: bool = False,
@@ -131,6 +132,8 @@ class AdminServer:
         self._password = password
         self._request_reload = request_reload
         self._defaults = defaults
+        # The base URL is an address, not a credential; shown in the admin UI.
+        self._dify_base_url = dify_base_url
         self._bind = bind
         self._port = port
         self._cookie_secure = cookie_secure
@@ -265,6 +268,7 @@ class AdminServer:
             "defaults": {
                 "session_max_total": self._defaults.session_max_total,
                 "session_ttl_seconds": self._defaults.session_ttl_seconds,
+                "dify_base_url": self._dify_base_url,
             },
         }
         return web.json_response(payload)

@@ -7,66 +7,105 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <h1>wecom-forward-plus <span class="sub">配置组管理</span></h1>
-    <button id="logout-btn" class="ghost" hidden>登出</button>
-  </header>
+<header>
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M1.5 8h9M7.5 4l4 4-4 4" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="14" cy="8" r="1.6" fill="currentColor"/>
+      </svg>
+    </span>
+    <h1>wecom-forward-plus<span class="sub">配置组管理</span></h1>
+  </div>
+  <button id="logout-btn" class="ghost" hidden>登出</button>
+</header>
 
+<main>
   <section id="login-section" hidden>
     <form id="login-form" class="card">
+      <h2>管理台登录</h2>
+      <p class="muted login-hint">输入管理密码以维护配置组。</p>
       <label for="password">管理密码</label>
       <input type="password" id="password" autocomplete="current-password" required>
       <p id="login-error" class="error" hidden></p>
-      <button type="submit">登录</button>
+      <button type="submit" class="primary">登录</button>
     </form>
   </section>
 
   <section id="main-section" hidden>
     <div class="toolbar">
-      <button id="add-group-btn">新增配置组</button>
-      <span id="defaults-note" class="muted"></span>
+      <button id="add-group-btn" class="primary">新增配置组</button>
     </div>
-    <table id="groups-table">
-      <thead>
-        <tr>
-          <th>名称</th>
-          <th>启用</th>
-          <th>机器人 ID</th>
-          <th>机器人 Secret</th>
-          <th>Dify Key</th>
-          <th>会话上限</th>
-          <th>TTL(秒)</th>
-          <th>更新时间</th>
-          <th>操作</th>
-        </tr>
-      </thead>
-      <tbody id="groups-body"></tbody>
-    </table>
+    <div id="defaults-panel" class="defaults-panel" hidden>
+      <span class="defaults-tag">全局默认</span>
+      <div class="defaults-items">
+        <div class="defaults-item">
+          <span class="defaults-key">Dify 地址</span>
+          <span id="dify-url" class="defaults-value mono"></span>
+        </div>
+        <div class="defaults-item">
+          <span class="defaults-key">会话上限</span>
+          <span id="default-session-max" class="defaults-value"></span>
+        </div>
+        <div class="defaults-item">
+          <span class="defaults-key">会话 TTL</span>
+          <span id="default-session-ttl" class="defaults-value"></span>
+        </div>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="groups-table">
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>启用</th>
+            <th>机器人 ID</th>
+            <th>机器人 Secret</th>
+            <th>Dify Key</th>
+            <th class="num">会话上限</th>
+            <th class="num">TTL(秒)</th>
+            <th>更新时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="groups-body"></tbody>
+      </table>
+      <div id="empty-state" class="empty" hidden>
+        <p class="empty-title">暂无配置组</p>
+        <p class="empty-hint">点击「新增配置组」，把第一个机器人与 Dify 应用接进来。</p>
+      </div>
+    </div>
     <p id="table-error" class="error" hidden></p>
   </section>
+</main>
 
-  <dialog id="group-dialog">
-    <form id="group-form" method="dialog">
-      <h2 id="dialog-title">新增配置组</h2>
-      <label>名称 <input name="name" required maxlength="100"></label>
-      <label>机器人 ID <input name="wecom_robot_id"></label>
-      <label>机器人 Secret <input type="password" name="wecom_robot_secret"
-        placeholder="留空表示保持不变" autocomplete="new-password"></label>
-      <label>Dify API Key <input type="password" name="dify_api_key"
-        placeholder="留空表示保持不变" autocomplete="new-password"></label>
+<dialog id="group-dialog">
+  <form id="group-form" method="dialog">
+    <h2 id="dialog-title">新增配置组</h2>
+    <label><span class="label-text">名称<span class="req-mark req-always" aria-hidden="true">*</span></span>
+      <input name="name" required maxlength="100"></label>
+    <label><span class="label-text">机器人 ID<span class="req-mark req-create" aria-hidden="true">*</span></span>
+      <input name="wecom_robot_id"></label>
+    <label><span class="label-text">机器人 Secret<span class="req-mark req-create" aria-hidden="true">*</span></span>
+      <input type="password" name="wecom_robot_secret" autocomplete="new-password"></label>
+    <label><span class="label-text">Dify API Key<span class="req-mark req-create" aria-hidden="true">*</span></span>
+      <input type="password" name="dify_api_key" autocomplete="new-password"></label>
+    <div class="form-grid">
       <label>会话上限 <input type="number" min="1" name="session_max_total"
-        placeholder="留空继承全局默认"></label>
+        placeholder="留空继承默认"></label>
       <label>TTL 秒数 <input type="number" min="1" name="session_ttl_seconds"
-        placeholder="留空继承全局默认"></label>
-      <label class="inline"><input type="checkbox" name="enabled" checked> 启用</label>
-      <p id="form-error" class="error" hidden></p>
-      <div class="actions">
-        <button type="submit" class="primary">保存</button>
-        <button type="button" id="cancel-btn" class="ghost">取消</button>
-      </div>
-    </form>
-  </dialog>
+        placeholder="留空继承默认"></label>
+    </div>
+    <label class="inline"><input type="checkbox" name="enabled" checked> 启用该组</label>
+    <p id="form-error" class="error" hidden></p>
+    <div class="actions">
+      <button type="button" id="cancel-btn" class="ghost">取消</button>
+      <button type="submit" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
 
-  <script src="/static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

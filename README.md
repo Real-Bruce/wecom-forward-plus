@@ -187,8 +187,9 @@ In database mode the process serves a built-in admin page (no Node/npm build ste
 Open `http://127.0.0.1:8080` (or your `ADMIN_BIND`/`ADMIN_PORT`) and log in. Under Docker the compose file overrides the in-container bind to `0.0.0.0` and publishes the UI to the host's `127.0.0.1` on the same `ADMIN_PORT`; set `WECOM_ADMIN_PUBLISH_HOST=0.0.0.0` in `.env` to expose it to the network (put TLS or a reverse proxy in front first):
 
 - The table shows every group: name, enabled toggle, robot id, **masked** robot secret and Dify API key, session parameters (inherited values are shown in italics), and the last update time.
-- "新增配置组" opens a form with all fields; session fields left empty inherit the global defaults.
-- Editing an existing group leaves the secret fields blank — **blank means "keep the stored value"**; fill one in only to rotate it.
+- A banner above the table highlights the global defaults: the Dify base URL (`DIFY_BASE_URL`), the default session cap, and the default session TTL.
+- "新增配置组" opens a form with all fields; fields marked with a red `*` are required. Session fields left empty inherit the global defaults.
+- Editing an existing group leaves the secret fields blank — **blank means "keep the stored value"**; fill one in only to rotate it. The stored secret itself is never sent back to the browser.
 - Toggling 启用 or saving a change takes effect immediately (within one database round-trip), not on the 30-second reload cycle.
 
 Security notes:

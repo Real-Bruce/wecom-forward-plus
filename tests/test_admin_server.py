@@ -13,6 +13,7 @@ from src.admin_server import AdminServer, LoginRateLimiter, group_row_json, mask
 from src.db_config import GroupDefaults
 
 DEFAULTS = GroupDefaults(session_ttl_seconds=300, session_max_total=200)
+DIFY_BASE_URL = "https://dify.example.test/v1"
 PASSWORD = "secret-pw"
 
 
@@ -97,6 +98,7 @@ def _make_server(repo=None, clock=None):
         password=PASSWORD,
         request_reload=reload_recorder,
         defaults=DEFAULTS,
+        dify_base_url=DIFY_BASE_URL,
         port=0,
         **({"clock": clock} if clock else {}),
     )
@@ -363,6 +365,7 @@ async def test_list_includes_effective_session_values(authed_client):
     assert payload["defaults"] == {
         "session_max_total": 200,
         "session_ttl_seconds": 300,
+        "dify_base_url": DIFY_BASE_URL,
     }
 
 

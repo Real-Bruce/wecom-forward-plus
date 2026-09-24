@@ -74,15 +74,20 @@ async function loadGroups() {
     const payload = await api("/api/groups");
     state.groups = payload.groups;
     state.defaults = payload.defaults;
-    $("defaults-note").textContent =
-      `全局默认：会话上限 ${payload.defaults.session_max_total}，TTL ${payload.defaults.session_ttl_seconds} 秒`;
+    renderDefaults(payload.defaults);
     renderGroups();
   } catch (err) {
-    if (err.status !== 401) {
-      $("table-error").textContent = err.message;
-      $("table-error").hidden = false;
-    }
+    if (err.status === 401) throw err; // showLogin() already ran inside api()
+    $("table-error").textContent = err.message;
+    $("table-error").hidden = false;
   }
+}
+
+function renderDefaults(defaults) {
+  $("dify-url").textContent = defaults.dify_base_url || "—";
+  $("default-session-max").textContent = `${defaults.session_max_total}`;
+  $("default-session-ttl").textContent = `${defaults.session_ttl_seconds} 秒`;
+  $("defaults-panel").hidden = false;
 }
 
 function renderGroups() {
@@ -91,6 +96,9 @@ function renderGroups() {
   for (const group of state.groups) {
     tbody.append(rowFor(group));
   }
+  const empty = state.groups.length === 0;
+  $("groups-table").hidden = empty;
+  $("empty-state").hidden = !empty;
 }
 
 function rowFor(group) {
@@ -100,26 +108,28 @@ function rowFor(group) {
   const cells = [
     textCell(group.name),
     enabledCell(group),
-    textCell(group.wecom_robot_id),
-    textCell(group.wecom_robot_secret_masked),
-    textCell(group.dify_api_key_masked),
+    textCell(group.wecom_robot_id, "mono"),
+    textCell(group.wecom_robot_secret_masked, "mono muted"),
+    textCell(group.dify_api_key_masked, "mono muted"),
     paramCell(group.session_max_total, group.effective_session_max_total),
     paramCell(group.session_ttl_seconds, group.effective_session_ttl_seconds),
-    textCell((group.updated_at || "").replace("T", " ").slice(0, 19)),
+    textCell((group.updated_at || "").replace("T", " ").slice(0, 19), "mono muted"),
     actionsCell(group),
   ];
   for (const cell of cells) tr.append(cell);
   return tr;
 }
 
-function textCell(value) {
+function textCell(value, className) {
   const td = document.createElement("td");
+  if (className) td.className = className;
   td.textContent = value == null ? "" : String(value);
   return td;
 }
 
 function paramCell(value, effective) {
   const td = document.createElement("td");
+  td.className = "num";
   if (value == null) {
     td.textContent = `${effective}`;
     td.title = "继承全局默认";
@@ -134,6 +144,9 @@ function enabledCell(group) {
   const td = document.createElement("td");
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
+  checkbox.className = "switch";
+  checkbox.setAttribute("role", "switch");
+  checkbox.setAttribute("aria-label", `启用「${group.name}」`);
   checkbox.checked = group.enabled;
   checkbox.addEventListener("change", () => toggleEnabled(group, checkbox));
   td.append(checkbox);
@@ -143,11 +156,11 @@ function enabledCell(group) {
 function actionsCell(group) {
   const td = document.createElement("td");
   const edit = document.createElement("button");
-  edit.className = "ghost";
+  edit.className = "ghost btn-sm";
   edit.textContent = "编辑";
   edit.addEventListener("click", () => openEdit(group));
   const del = document.createElement("button");
-  del.className = "ghost danger";
+  del.className = "ghost danger btn-sm";
   del.textContent = "删除";
   del.addEventListener("click", () => deleteGroup(group));
   td.append(edit, del);
@@ -164,6 +177,7 @@ async function toggleEnabled(group, checkbox) {
     await loadGroups();
   } catch (err) {
     checkbox.checked = !checkbox.checked; // revert the optimistic toggle
+    if (err.status === 401) return; // login screen is already up
     $("table-error").textContent = err.message;
     $("table-error").hidden = false;
   }
@@ -175,6 +189,7 @@ async function deleteGroup(group) {
     await api(`/api/groups/${group.id}`, { method: "DELETE" });
     await loadGroups();
   } catch (err) {
+    if (err.status === 401) return; // login screen is already up
     $("table-error").textContent = err.message;
     $("table-error").hidden = false;
   }
@@ -187,12 +202,19 @@ const form = $("group-form");
 
 $("add-group-btn").addEventListener("click", () => openCreate());
 
+const SECRET_FIELDS = ["wecom_robot_secret", "dify_api_key"];
+
 function openCreate() {
   state.editing = null;
   $("dialog-title").textContent = "新增配置组";
   form.reset();
+  form.classList.add("mode-create");
   form.elements.enabled.checked = true;
   form.elements.wecom_robot_id.required = true;
+  for (const field of SECRET_FIELDS) {
+    form.elements[field].required = true;
+    form.elements[field].placeholder = "必填";
+  }
   $("form-error").hidden = true;
   dialog.showModal();
 }
@@ -201,6 +223,7 @@ function openEdit(group) {
   state.editing = group;
   $("dialog-title").textContent = `编辑「${group.name}」`;
   form.reset();
+  form.classList.remove("mode-create");
   form.elements.name.value = group.name;
   form.elements.wecom_robot_id.value = group.wecom_robot_id;
   // Secret inputs stay blank: blank = keep the stored value.
@@ -208,6 +231,10 @@ function openEdit(group) {
   form.elements.session_ttl_seconds.value = group.session_ttl_seconds == null ? "" : group.session_ttl_seconds;
   form.elements.enabled.checked = group.enabled;
   form.elements.wecom_robot_id.required = false;
+  for (const field of SECRET_FIELDS) {
+    form.elements[field].required = false;
+    form.elements[field].placeholder = "留空表示保持不变";
+  }
   $("form-error").hidden = true;
   dialog.showModal();
 }
@@ -250,4 +277,4 @@ form.addEventListener("submit", async (event) => {
 
 // -- boot ---------------------------------------------------------------------------
 
-loadGroups().catch(() => showLogin());
+loadGroups().then(() => showMain()).catch(() => { /* 401: showLogin ran in api() */ });
