@@ -6,23 +6,17 @@
 #
 # The repository-root compose.yaml includes this file; running from the root
 # makes Compose load the root .env for ${VAR} interpolation (the admin-UI
-# port/publish-host below). ${VAR} interpolation only reads a .env next to
-# the invocation directory, which is why the PostgreSQL password is NOT
-# interpolated — see the postgres service for how it is passed instead.
+# port/publish-host below).
 #
 # The build context is the repository root (parent of this directory), so
 # Dockerfile COPY paths are relative to the repo root. Configuration is
 # injected via `env_file`; the container does not need a copy of `.env`
 # inside it. Rotating logs are written to ../logs on the host.
 #
-# The optional `postgres` service below serves the runtime group
-# configuration (CONFIG_SOURCE=database in .env). It listens on 5432 inside
-# the compose network (WECOM_FORWARD_PLUS_DATABASE_URL uses
-# postgres:5432) and is published to the host on port 5772 for psql/admin
-# access from the host machine. The `groups` table is created automatically
-# (postgres-init.sql on first volume init, plus DDL on every application
-# startup). Delete the service and the `depends_on` block if you point
-# WECOM_FORWARD_PLUS_DATABASE_URL at an external PostgreSQL instance instead.
+# In database mode the groups table lives in a SQLite file. The default path
+# inside the container is data/wecom.db (relative to /app); the ./data volume
+# mount below persists it across container recreations. The file (and its
+# parent directory) is created automatically on startup.
 
 services:
   wecom-forward-plus:
@@ -48,42 +42,5 @@ services:
     volumes:
       # Persist rotating log files (logs/app.log) to the host.
       - ../logs:/app/logs
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  postgres:
-    image: postgres:16-alpine
-    container_name: wecom-forward-plus-postgres
-    restart: unless-stopped
-    # POSTGRES_PASSWORD is passed via env_file instead of ${VAR}
-    # interpolation on purpose: interpolation only reads the .env next to the
-    # invocation directory, so `cd docker && docker compose up` failed with
-    # "required variable WECOM_POSTGRES_PASSWORD is missing a value" even
-    # though the value sat in the repository-root .env. env_file paths are
-    # resolved relative to this file, so ../.env works from any directory.
-    # The postgres image ignores the non-POSTGRES_* vars in .env; if the
-    # password is missing it fails with a clear "superuser password is not
-    # specified" error. `environment:` below overrides env_file, keeping
-    # the user/database fixed.
-    env_file:
-      - ../.env
-    environment:
-      POSTGRES_USER: wecom
-      POSTGRES_DB: wecom
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      # Create the groups table as soon as the database is initialized
-      # (idempotent; runs only when the pgdata volume is empty).
-      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-groups.sql:ro
-    # Host access on 5772; containers use postgres:5432.
-    ports:
-      - "5772:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wecom -d wecom"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-volumes:
-  pgdata:
+      # Persist the SQLite groups database (data/wecom.db) to the host.
+      - ../data:/app/data

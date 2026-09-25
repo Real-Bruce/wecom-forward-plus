@@ -7,9 +7,6 @@
 # directory. Running `cd docker && docker compose ...` instead makes the
 # project directory docker/, the root .env is not loaded, and a custom
 # WECOM_FORWARD_PLUS_ADMIN_PORT would silently fall back to the default.
-# (The PostgreSQL password is not affected: the postgres service reads it
-# from ../.env via env_file, which resolves relative to the compose file
-# and works from any invocation directory.)
 #
 # Run from the repository root:
 #     cp .env.example .env   # then fill in real values
