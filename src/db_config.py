@@ -1,22 +1,29 @@
-"""PostgreSQL-backed group configuration.
+"""SQLite-backed group configuration.
 
 The ``groups`` table is the source of truth when ``CONFIG_SOURCE=database``.
-:class:`GroupRepository` is a thin asyncpg wrapper (plain SQL, no ORM); the
+:class:`GroupRepository` is a thin aiosqlite wrapper (plain SQL, no ORM); the
 row mapping, validation and diffing logic live in pure functions so they can
 be tested without a real database.
 
-Security: the DSN contains database credentials and the rows contain robot
-secrets and Dify API keys — none of them may ever be logged. Validation
-errors carry the group name and field name only, never values.
+The repository shares one aiosqlite connection across the admin UI and the
+reconcile loop; aiosqlite serializes access on its own worker thread, and WAL
+journaling keeps concurrent readers/writers safe. The application is designed
+to run as a single process per WeCom account set (multiple instances would
+double-connect the same robots), which is exactly SQLite's model.
+
+Security: the rows contain robot secrets and Dify API keys — none of them may
+ever be logged. Validation errors carry the group name and field name only,
+never values.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-import asyncpg
+import aiosqlite
 
 from .config import GroupConfig
 
@@ -33,18 +40,18 @@ _GROUP_COLUMNS = (
     "session_max_total, session_ttl_seconds, enabled, created_at, updated_at"
 )
 
-DDL = f"""
+DDL = """
 CREATE TABLE IF NOT EXISTS groups (
-    id                  SERIAL PRIMARY KEY,
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     name                TEXT NOT NULL UNIQUE,
     wecom_robot_id      TEXT NOT NULL,
     wecom_robot_secret  TEXT NOT NULL,
     dify_api_key        TEXT NOT NULL,
     session_max_total   INTEGER,
     session_ttl_seconds INTEGER,
-    enabled             BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 )
 """
 
@@ -196,33 +203,55 @@ def compute_group_diff(
 
 
 class GroupRepository:
-    """asyncpg-backed access to the ``groups`` table. Plain SQL, no ORM."""
+    """aiosqlite-backed access to the ``groups`` table. Plain SQL, no ORM."""
 
-    def __init__(self, dsn: str) -> None:
-        self._dsn = dsn
-        self._pool: Optional[asyncpg.Pool] = None
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self._db: Optional[aiosqlite.Connection] = None
 
     async def connect(self) -> None:
-        """Open the connection pool and ensure the schema exists."""
-        self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=2)
-        assert self._pool is not None
-        await self._pool.execute(DDL)
+        """Open the database file and ensure the schema exists."""
+        Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(self._path)
+        try:
+            db.row_factory = aiosqlite.Row
+            await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute(DDL)
+            await db.commit()
+        except Exception:
+            await db.close()
+            raise
+        self._db = db
 
     async def close(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
+        if self._db is not None:
+            await self._db.close()
+            self._db = None
 
-    def _pool_or_raise(self) -> asyncpg.Pool:
-        if self._pool is None:
+    def _db_or_raise(self) -> aiosqlite.Connection:
+        if self._db is None:
             raise RuntimeError("GroupRepository is not connected")
-        return self._pool
+        return self._db
 
-    async def list_rows(self) -> List[Mapping[str, Any]]:
-        """All rows, disabled ones included (diffing skips them)."""
-        return list(await self._pool_or_raise().fetch(
+    async def list_rows(self) -> List[Dict[str, Any]]:
+        """All rows, disabled ones included (diffing skips them).
+
+        Rows are returned as plain dicts with ``enabled`` coerced back to a
+        bool so downstream pure functions see the same types an ORM would
+        produce (SQLite stores booleans as 0/1 integers).
+        """
+        db = self._db_or_raise()
+        async with db.execute(
             f"SELECT {_GROUP_COLUMNS} FROM groups ORDER BY id"
-        ))
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            {
+                key: (bool(row[key]) if key == "enabled" else row[key])
+                for key in row.keys()
+            }
+            for row in rows
+        ]
 
     async def insert_group(
         self,
@@ -236,25 +265,26 @@ class GroupRepository:
         enabled: bool = True,
     ) -> int:
         """Insert one group; returns its new id."""
-        pool = self._pool_or_raise()
-        row = await pool.fetchrow(
+        db = self._db_or_raise()
+        cursor = await db.execute(
             """
             INSERT INTO groups (
                 name, wecom_robot_id, wecom_robot_secret, dify_api_key,
                 session_max_total, session_ttl_seconds, enabled
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            name,
-            wecom_robot_id,
-            wecom_robot_secret,
-            dify_api_key,
-            session_max_total,
-            session_ttl_seconds,
-            enabled,
+            (
+                name,
+                wecom_robot_id,
+                wecom_robot_secret,
+                dify_api_key,
+                session_max_total,
+                session_ttl_seconds,
+                enabled,
+            ),
         )
-        assert row is not None
-        return row["id"]
+        await db.commit()
+        return int(cursor.lastrowid)
 
     async def update_group(
         self,
@@ -274,12 +304,12 @@ class GroupRepository:
         field means "keep" while an explicit ``None`` means "clear the column,
         inherit the global default again".
         """
-        assignments: List[str] = ["updated_at = now()"]
-        params: List[Any] = [group_id]
+        assignments: List[str] = ["updated_at = datetime('now')"]
+        params: List[Any] = []
 
         def _set(column: str, value: Any) -> None:
             params.append(value)
-            assignments.append(f"{column} = ${len(params)}")
+            assignments.append(f"{column} = ?")
 
         if name is not None:
             _set("name", name)
@@ -296,17 +326,17 @@ class GroupRepository:
         if enabled is not None:
             _set("enabled", enabled)
 
-        pool = self._pool_or_raise()
-        row = await pool.fetchrow(
-            f"UPDATE groups SET {', '.join(assignments)} WHERE id = $1 RETURNING id",
-            *params,
+        db = self._db_or_raise()
+        params.append(group_id)
+        cursor = await db.execute(
+            f"UPDATE groups SET {', '.join(assignments)} WHERE id = ?", params
         )
-        return row is not None
+        await db.commit()
+        return cursor.rowcount > 0
 
     async def delete_group(self, group_id: int) -> bool:
         """Delete one group; returns False when the row does not exist."""
-        pool = self._pool_or_raise()
-        row = await pool.fetchrow(
-            "DELETE FROM groups WHERE id = $1 RETURNING id", group_id
-        )
-        return row is not None
+        db = self._db_or_raise()
+        cursor = await db.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        await db.commit()
+        return cursor.rowcount > 0

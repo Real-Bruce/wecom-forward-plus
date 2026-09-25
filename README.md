@@ -24,7 +24,7 @@ src/
 ├── main.py               Entry point: load config, logging, start one client per group
 ├── config.py             Parse + validate WECOM_FORWARD_PLUS_* environment variables
 ├── config_store.py       Mutable in-process group registry (hot-reload seam)
-├── db_config.py          PostgreSQL groups table: repository + row mapping/validation/diff
+├── db_config.py          SQLite groups table: repository + row mapping/validation/diff
 ├── group_manager.py      Live WeCom client per group + database reconcile loop
 ├── admin_server.py       Authenticated admin web UI over the groups table
 ├── session_manager.py    Per-group session pools (TTL + cap + LRU eviction + reset)
@@ -116,8 +116,8 @@ All settings are read from environment variables (loaded from `.env` via python-
 | `WECOM_FORWARD_PLUS_GROUP_{N}_DIFY_API_KEY` | ✅ (per group) | — | Dify app API key |
 | `WECOM_FORWARD_PLUS_GROUP_{N}_SESSION_MAX_TOTAL` | — | global default | Per-group override of the session cap |
 | `WECOM_FORWARD_PLUS_GROUP_{N}_SESSION_TTL_SECONDS` | — | global default | Per-group override of the conversation TTL |
-| `WECOM_FORWARD_PLUS_CONFIG_SOURCE` | — | `env` | Where group configuration comes from: `env` (variables) or `database` (PostgreSQL; see [below](#runtime-group-configuration-postgresql)) |
-| `WECOM_FORWARD_PLUS_DATABASE_URL` | ✅ when `CONFIG_SOURCE=database` | — | PostgreSQL DSN, e.g. `postgresql://user:password@localhost:5432/wecom` (never logged) |
+| `WECOM_FORWARD_PLUS_CONFIG_SOURCE` | — | `env` | Where group configuration comes from: `env` (variables) or `database` (SQLite; see [below](#runtime-group-configuration-sqlite)) |
+| `WECOM_FORWARD_PLUS_DATABASE_PATH` | — | `data/wecom.db` | SQLite file holding the `groups` table (database mode; created automatically, parent directories included) |
 | `WECOM_FORWARD_PLUS_DB_RELOAD_INTERVAL_SECONDS` | — | `30` | How often the running process re-reads group configuration from the database (minimum 5) |
 | `WECOM_FORWARD_PLUS_ADMIN_UI` | — | `on` | Admin web UI on/off (database mode only; see [below](#admin-web-ui)) |
 | `WECOM_FORWARD_PLUS_ADMIN_PASSWORD` | ✅ when `CONFIG_SOURCE=database` and UI on | — | Admin login password (never logged) |
@@ -129,24 +129,24 @@ Group indices start at 1 and must be contiguous. Each group requires `WECOM_ROBO
 
 With `CONFIG_SOURCE=database` the `GROUP_` variables are not parsed at all — group configuration is read from the database (see below), so stale entries left in `.env` after a migration cannot break startup.
 
-## Runtime group configuration (PostgreSQL)
+## Runtime group configuration (SQLite)
 
-Setting `WECOM_FORWARD_PLUS_CONFIG_SOURCE=database` moves group management into a PostgreSQL table. The two sources are strictly either/or: nothing is ever imported from `.env` into the database, and `GROUP_` variables are ignored while database mode is active.
+Setting `WECOM_FORWARD_PLUS_CONFIG_SOURCE=database` moves group management into a SQLite table (`WECOM_FORWARD_PLUS_DATABASE_PATH`, default `data/wecom.db` — no separate database service, account, or password). The two sources are strictly either/or: nothing is ever imported from `.env` into the database, and `GROUP_` variables are ignored while database mode is active.
 
-The table is created automatically on startup:
+The file and the table are created automatically on startup:
 
 ```sql
 CREATE TABLE IF NOT EXISTS groups (
-    id                  SERIAL PRIMARY KEY,
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     name                TEXT NOT NULL UNIQUE,
     wecom_robot_id      TEXT NOT NULL,
     wecom_robot_secret  TEXT NOT NULL,
     dify_api_key        TEXT NOT NULL,
     session_max_total   INTEGER,          -- NULL = global default
     session_ttl_seconds INTEGER,          -- NULL = global default
-    enabled             BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
 
@@ -176,9 +176,9 @@ The running process re-reads the table every `DB_RELOAD_INTERVAL_SECONDS` (defau
 
 Global settings (`DIFY_BASE_URL`, reset keywords, the session defaults the nullable columns fall back to) remain environment-only; only per-group values live in the database.
 
-Secrets are stored in plaintext — the process environment already holds equivalent credentials, so application-side encryption would only relocate them. Restrict the database user to this table, keep the database on a private network, and rely on the never-log rule: neither the DSN nor any credential value is ever written to logs.
+Secrets are stored in plaintext — the process environment already holds equivalent credentials, so application-side encryption would only relocate them. Restrict the database file's read permission at the filesystem level, and rely on the never-log rule: no credential value is ever written to logs.
 
-See [docs/connect-postgres.md](docs/connect-postgres.md) for setup, SQL examples, and Docker Compose instructions.
+See [docs/config-database.md](docs/config-database.md) for backup, SQL examples, and Docker Compose instructions.
 
 ## Admin web UI
 
@@ -234,9 +234,9 @@ Then continue with [Deploy with Docker](#deploy-with-docker).
 
 ## Deploy with Docker
 
-All Docker files live in `docker/` (`Dockerfile`, `docker-compose.yml`, `Dockerfile.dockerignore`); the repository-root `compose.yaml` is a thin wrapper that includes `docker/docker-compose.yml` so running Compose from the repository root loads the repository-root `.env` for `${VAR}` interpolation. The PostgreSQL password needs no interpolation — the `postgres` service reads it from `.env` via `env_file`, which works from any invocation directory — but run from the repository root anyway so a custom `WECOM_FORWARD_PLUS_ADMIN_PORT` / `WECOM_ADMIN_PUBLISH_HOST` is honored.
+All Docker files live in `docker/` (`Dockerfile`, `docker-compose.yml`, `Dockerfile.dockerignore`); the repository-root `compose.yaml` is a thin wrapper that includes `docker/docker-compose.yml` so running Compose from the repository root loads the repository-root `.env` for `${VAR}` interpolation (`WECOM_FORWARD_PLUS_ADMIN_PORT` / `WECOM_ADMIN_PUBLISH_HOST`). Run from the repository root so those are honored.
 
-The compose file also starts an optional bundled PostgreSQL 16 (for `CONFIG_SOURCE=database`): it is reachable as `postgres:5432` from the app container and published to the host on port **5772**. The `groups` table is created automatically — `docker/postgres-init.sql` runs when the data volume is first initialized, and the application itself runs `CREATE TABLE IF NOT EXISTS` on every startup. See [docs/connect-postgres.md](docs/connect-postgres.md).
+In database mode the `groups` table lives in a SQLite file — no bundled database container. The compose file mounts the repository-root `data/` directory at `/app/data`, matching the default `WECOM_FORWARD_PLUS_DATABASE_PATH=data/wecom.db`, so group configuration persists across container recreations; the file and table are created automatically on startup. See [docs/config-database.md](docs/config-database.md).
 
 ```bash
 # 1. Provide configuration in the repository root (never committed)

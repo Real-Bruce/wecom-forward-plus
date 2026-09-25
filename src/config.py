@@ -17,9 +17,10 @@ exit with a clear message before connecting to anything.
 
 ``WECOM_FORWARD_PLUS_CONFIG_SOURCE`` selects where group configuration comes
 from: ``env`` (the default, variables as above) or ``database`` (groups are
-read from PostgreSQL and ``GROUP_`` variables are not parsed at all). In
-``database`` mode ``WECOM_FORWARD_PLUS_DATABASE_URL`` is required, and the
-admin web UI variables become meaningful: ``ADMIN_PASSWORD`` (login),
+read from a SQLite file and ``GROUP_`` variables are not parsed at all). In
+``database`` mode ``WECOM_FORWARD_PLUS_DATABASE_PATH`` selects the file
+(default ``data/wecom.db``), and the admin web UI variables become
+meaningful: ``ADMIN_PASSWORD`` (login),
 ``ADMIN_BIND`` / ``ADMIN_PORT`` (listen address), ``ADMIN_UI`` (on/off) and
 ``ADMIN_COOKIE_SECURE`` (enable when TLS-terminated in front).
 """
@@ -39,6 +40,10 @@ SOURCE_DATABASE = "database"
 DEFAULT_SESSION_TTL_SECONDS = 300
 DEFAULT_SESSION_MAX_TOTAL = 200
 DEFAULT_RESET_KEYWORDS = ["开启新对话", "重置对话", "新一轮对话"]
+
+# SQLite file holding the groups table in database mode; relative paths are
+# resolved against the process working directory.
+DEFAULT_DATABASE_PATH = "data/wecom.db"
 
 DEFAULT_DB_RELOAD_INTERVAL_SECONDS = 30.0
 # Never reconcile faster than this, whatever the configuration says.
@@ -85,7 +90,7 @@ class Config:
     reset_keywords: List[str]
     groups: List[GroupConfig] = field(default_factory=list)
     config_source: str = SOURCE_ENV
-    database_url: str = ""
+    database_path: str = DEFAULT_DATABASE_PATH
     db_reload_interval_seconds: float = DEFAULT_DB_RELOAD_INTERVAL_SECONDS
     admin_ui_enabled: bool = True
     admin_password: str = ""
@@ -268,12 +273,9 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
     if source not in (SOURCE_ENV, SOURCE_DATABASE):
         raise ConfigError(f"{PREFIX}CONFIG_SOURCE must be 'env' or 'database'")
 
-    database_url = (env.get(PREFIX + "DATABASE_URL") or "").strip()
-    if source == SOURCE_DATABASE and not database_url:
-        raise ConfigError(
-            f"{PREFIX}DATABASE_URL is required when "
-            f"{PREFIX}CONFIG_SOURCE is 'database'"
-        )
+    database_path = (env.get(PREFIX + "DATABASE_PATH") or "").strip()
+    if not database_path:
+        database_path = DEFAULT_DATABASE_PATH
 
     reload_interval = _float_env(
         env, "DB_RELOAD_INTERVAL_SECONDS", DEFAULT_DB_RELOAD_INTERVAL_SECONDS
@@ -309,7 +311,7 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
         reset_keywords=keywords,
         groups=groups,
         config_source=source,
-        database_url=database_url,
+        database_path=database_path,
         db_reload_interval_seconds=reload_interval,
         admin_ui_enabled=admin_ui_enabled,
         admin_password=admin_password,

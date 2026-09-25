@@ -14,7 +14,7 @@ dependencies = [
     "wecom-aibot-python-sdk>=1.0.2",
     "aiohttp>=3.9",
     "python-dotenv>=1.0",
-    "asyncpg>=0.29",
+    "aiosqlite>=0.20",
 ]
 
 [project.optional-dependencies]

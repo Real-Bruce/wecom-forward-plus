@@ -1,15 +1,18 @@
-"""Tests for the pure mapping/validation/diff logic in db_config.
+"""Tests for the pure mapping/validation/diff logic and the repository.
 
-Rows are plain dicts (asyncpg Records behave like mappings); the repository
-itself is not covered here — it is exercised end-to-end against a real
-PostgreSQL during manual verification.
+Rows are plain dicts for the pure-function tests; the repository tests run
+against a real SQLite file (aiosqlite) in a pytest tmp_path so the SQL layer
+is covered without any external service.
 """
+
+import sqlite3
 
 import pytest
 
 from src.config import GroupConfig
 from src.db_config import (
     GroupDefaults,
+    GroupRepository,
     GroupValidationError,
     compute_group_diff,
     rows_to_desired,
@@ -204,3 +207,143 @@ def test_diff_live_without_current_is_added():
     diff = compute_group_diff(live=[], current={"sales": _group()}, desired={"sales": _group()})
     assert [g.name for g in diff.added] == ["sales"]
     assert not diff.restarted
+
+
+# -- GroupRepository (real SQLite) ---------------------------------------------
+
+
+@pytest.fixture
+async def repo(tmp_path):
+    repository = GroupRepository(str(tmp_path / "groups.db"))
+    await repository.connect()
+    yield repository
+    await repository.close()
+
+
+async def test_connect_creates_schema_and_lists_empty(repo):
+    assert await repo.list_rows() == []
+
+
+async def test_connect_creates_missing_parent_directories(tmp_path):
+    path = tmp_path / "nested" / "dir" / "groups.db"
+    repository = GroupRepository(str(path))
+    await repository.connect()
+    try:
+        assert path.exists()
+        assert await repository.list_rows() == []
+    finally:
+        await repository.close()
+
+
+async def test_insert_returns_increasing_ids_and_persists(repo):
+    first = await repo.insert_group(
+        name="a",
+        wecom_robot_id="bot-1",
+        wecom_robot_secret="sec-1",
+        dify_api_key="app-1",
+    )
+    second = await repo.insert_group(
+        name="b",
+        wecom_robot_id="bot-2",
+        wecom_robot_secret="sec-2",
+        dify_api_key="app-2",
+        session_max_total=300,
+        session_ttl_seconds=600,
+        enabled=False,
+    )
+    assert second == first + 1
+
+    rows = await repo.list_rows()
+    assert [row["name"] for row in rows] == ["a", "b"]
+    # SQLite stores booleans as 0/1; the repository coerces them back.
+    assert rows[0]["enabled"] is True
+    assert rows[1]["enabled"] is False
+    assert rows[0]["session_max_total"] is None
+    assert rows[1]["session_max_total"] == 300
+
+
+async def test_repository_rows_feed_rows_to_desired(repo):
+    # Integration of the SQL layer with the pure mapping: disabled rows must
+    # be skipped (which only works when 0/1 is coerced back to a bool).
+    await repo.insert_group(
+        name="a",
+        wecom_robot_id="bot-1",
+        wecom_robot_secret="sec-1",
+        dify_api_key="app-1",
+    )
+    await repo.insert_group(
+        name="b",
+        wecom_robot_id="bot-2",
+        wecom_robot_secret="sec-2",
+        dify_api_key="app-2",
+        enabled=False,
+    )
+    desired = rows_to_desired(await repo.list_rows(), DEFAULTS)
+    assert set(desired) == {"a"}
+    assert desired["a"].session_max_total == DEFAULTS.session_max_total
+
+
+async def test_insert_duplicate_name_raises_integrity_error(repo):
+    await repo.insert_group(
+        name="a", wecom_robot_id="bot", wecom_robot_secret="sec", dify_api_key="app"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        await repo.insert_group(
+            name="a", wecom_robot_id="bot", wecom_robot_secret="sec", dify_api_key="app"
+        )
+
+
+async def test_update_partial_fields_and_touches_updated_at(repo):
+    group_id = await repo.insert_group(
+        name="a", wecom_robot_id="bot", wecom_robot_secret="sec", dify_api_key="app"
+    )
+    updated = await repo.update_group(group_id, dify_api_key="app-rotated")
+    assert updated is True
+
+    rows = await repo.list_rows()
+    assert rows[0]["dify_api_key"] == "app-rotated"
+    assert rows[0]["wecom_robot_secret"] == "sec"  # untouched
+    assert rows[0]["updated_at"] is not None
+
+
+async def test_update_can_clear_session_columns(repo):
+    group_id = await repo.insert_group(
+        name="a",
+        wecom_robot_id="bot",
+        wecom_robot_secret="sec",
+        dify_api_key="app",
+        session_max_total=300,
+    )
+    await repo.update_group(group_id, session_max_total=None)
+    rows = await repo.list_rows()
+    assert rows[0]["session_max_total"] is None
+
+
+async def test_update_duplicate_name_raises_integrity_error(repo):
+    await repo.insert_group(
+        name="a", wecom_robot_id="bot", wecom_robot_secret="sec", dify_api_key="app"
+    )
+    group_id = await repo.insert_group(
+        name="b", wecom_robot_id="bot", wecom_robot_secret="sec", dify_api_key="app"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        await repo.update_group(group_id, name="a")
+
+
+async def test_update_missing_row_returns_false(repo):
+    assert await repo.update_group(999, name="x") is False
+
+
+async def test_delete_group(repo):
+    group_id = await repo.insert_group(
+        name="a", wecom_robot_id="bot", wecom_robot_secret="sec", dify_api_key="app"
+    )
+    assert await repo.delete_group(group_id) is True
+    assert await repo.delete_group(group_id) is False
+    assert await repo.list_rows() == []
+
+
+async def test_operations_before_connect_raise():
+    repository = GroupRepository("unused.db")
+    with pytest.raises(RuntimeError, match="not connected"):
+        await repository.list_rows()

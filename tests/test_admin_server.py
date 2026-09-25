@@ -4,7 +4,7 @@ The repository is a fake; the HTTP layer runs on aiohttp's TestServer. No
 real database is involved.
 """
 
-import asyncpg
+import sqlite3
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from yarl import URL
@@ -42,7 +42,7 @@ class FakeRepo:
         if self.error is not None:
             raise self.error
         if any(row["name"] == fields["name"] for row in self.rows):
-            raise asyncpg.UniqueViolationError("duplicate key")
+            raise sqlite3.IntegrityError("UNIQUE constraint failed: groups.name")
         row = {
             "id": self.next_id,
             "created_at": None,
@@ -64,7 +64,7 @@ class FakeRepo:
         if new_name is not None and any(
             row["name"] == new_name for row in self.rows if row["id"] != group_id
         ):
-            raise asyncpg.UniqueViolationError("duplicate key")
+            raise sqlite3.IntegrityError("UNIQUE constraint failed: groups.name")
         for row in self.rows:
             if row["id"] == group_id:
                 self.updates.append((group_id, fields))

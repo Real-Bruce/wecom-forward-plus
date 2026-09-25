@@ -101,7 +101,7 @@ def _has_env_group_vars() -> bool:
 
 async def _run_database(config: Config) -> None:
     dify_client = DifyClient(config.dify_base_url)
-    repo = GroupRepository(config.database_url)
+    repo = GroupRepository(config.database_path)
     try:
         logger.info("Connecting to group configuration database")
         await repo.connect()

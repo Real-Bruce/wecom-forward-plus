@@ -23,11 +23,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-import asyncpg
 from aiohttp import web
 
 from .db_config import GroupDefaults, GroupRepository, GroupValidationError, validate_group_fields
@@ -312,7 +312,7 @@ class AdminServer:
                 session_ttl_seconds=session_ttl_seconds,
                 enabled=enabled,
             )
-        except asyncpg.UniqueViolationError:
+        except sqlite3.IntegrityError:
             return _error_response(409, f"group name already exists: {name}")
 
         self._request_reload()
@@ -374,7 +374,7 @@ class AdminServer:
                 session_ttl_seconds=session_ttl_seconds,
                 enabled=enabled,
             )
-        except asyncpg.UniqueViolationError:
+        except sqlite3.IntegrityError:
             return _error_response(409, f"group name already exists: {name}")
 
         if not updated:

@@ -3,6 +3,7 @@
 import pytest
 
 from src.config import (
+    DEFAULT_DATABASE_PATH,
     DEFAULT_DB_RELOAD_INTERVAL_SECONDS,
     DEFAULT_RESET_KEYWORDS,
     DEFAULT_SESSION_MAX_TOTAL,
@@ -137,7 +138,7 @@ def test_invalid_integer():
 def test_config_source_defaults_to_env():
     config = load_config(_env())
     assert config.config_source == "env"
-    assert config.database_url == ""
+    assert config.database_path == DEFAULT_DATABASE_PATH
     assert config.db_reload_interval_seconds == DEFAULT_DB_RELOAD_INTERVAL_SECONDS
 
 
@@ -146,22 +147,30 @@ def test_invalid_config_source():
         load_config(_env(**{"WECOM_FORWARD_PLUS_CONFIG_SOURCE": "yaml"}))
 
 
-def test_database_source_requires_database_url():
-    with pytest.raises(ConfigError, match="DATABASE_URL is required"):
-        load_config(
-            _env(
-                **{
-                    "WECOM_FORWARD_PLUS_CONFIG_SOURCE": "database",
-                }
-            )
-        )
+def test_database_source_uses_default_database_path():
+    config = load_config(_env(**{"WECOM_FORWARD_PLUS_CONFIG_SOURCE": "database",
+                                 "WECOM_FORWARD_PLUS_ADMIN_PASSWORD": "admin-pw"}))
+    assert config.database_path == DEFAULT_DATABASE_PATH
+
+
+def test_database_path_can_be_overridden():
+    config = load_config(_env(**{"WECOM_FORWARD_PLUS_CONFIG_SOURCE": "database",
+                                 "WECOM_FORWARD_PLUS_DATABASE_PATH": "custom/groups.db",
+                                 "WECOM_FORWARD_PLUS_ADMIN_PASSWORD": "admin-pw"}))
+    assert config.database_path == "custom/groups.db"
+
+
+def test_blank_database_path_falls_back_to_default():
+    config = load_config(_env(**{"WECOM_FORWARD_PLUS_CONFIG_SOURCE": "database",
+                                 "WECOM_FORWARD_PLUS_DATABASE_PATH": "  ",
+                                 "WECOM_FORWARD_PLUS_ADMIN_PASSWORD": "admin-pw"}))
+    assert config.database_path == DEFAULT_DATABASE_PATH
 
 
 def _db_env(**overrides):
     env = _env(
         **{
             "WECOM_FORWARD_PLUS_CONFIG_SOURCE": "database",
-            "WECOM_FORWARD_PLUS_DATABASE_URL": "postgresql://user:pw@localhost:5432/wfp",
             "WECOM_FORWARD_PLUS_ADMIN_PASSWORD": "admin-pw",
         }
     )

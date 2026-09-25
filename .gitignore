@@ -8,6 +8,9 @@ secrets/
 # Logs
 logs/
 
+# Runtime SQLite database (database mode)
+data/
+
 # Python
 __pycache__/
 *.py[cod]
