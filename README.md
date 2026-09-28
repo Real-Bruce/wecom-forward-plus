@@ -1,3 +1,5 @@
+English | [简体中文](README.zh-CN.md)
+
 # wecom-forward-plus
 
 A Python bridge between Enterprise WeChat (企业微信) robots and [Dify](https://dify.ai) apps. It connects to WeCom robots over their WebSocket long-connection channel, forwards incoming user messages to a Dify chat application, and sends the streaming reply back to WeCom.
