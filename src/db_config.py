@@ -40,7 +40,11 @@ _GROUP_COLUMNS = (
     "session_max_total, session_ttl_seconds, enabled, created_at, updated_at"
 )
 
-DDL = """
+# SQLite's datetime('now') is always UTC; shift to UTC+8 so stored/displayed
+# timestamps match Beijing time regardless of the host or container timezone.
+_NOW_SQL = "datetime('now', '+8 hours')"
+
+DDL = f"""
 CREATE TABLE IF NOT EXISTS groups (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     name                TEXT NOT NULL UNIQUE,
@@ -50,8 +54,8 @@ CREATE TABLE IF NOT EXISTS groups (
     session_max_total   INTEGER,
     session_ttl_seconds INTEGER,
     enabled             INTEGER NOT NULL DEFAULT 1,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at          TEXT NOT NULL DEFAULT ({_NOW_SQL}),
+    updated_at          TEXT NOT NULL DEFAULT ({_NOW_SQL})
 )
 """
 
@@ -304,7 +308,7 @@ class GroupRepository:
         field means "keep" while an explicit ``None`` means "clear the column,
         inherit the global default again".
         """
-        assignments: List[str] = ["updated_at = datetime('now')"]
+        assignments: List[str] = [f"updated_at = {_NOW_SQL}"]
         params: List[Any] = []
 
         def _set(column: str, value: Any) -> None:

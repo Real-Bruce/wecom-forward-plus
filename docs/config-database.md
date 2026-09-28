@@ -31,10 +31,13 @@ CREATE TABLE IF NOT EXISTS groups (
     session_max_total   INTEGER,          -- NULL = 用全局默认
     session_ttl_seconds INTEGER,          -- NULL = 用全局默认
     enabled             INTEGER NOT NULL DEFAULT 1,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at          TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
 );
 ```
+
+`created_at`/`updated_at` 以北京时间（UTC+8）存储——SQLite 的 `datetime('now')`
+本身返回的是 UTC。
 
 全局设置（`DIFY_BASE_URL`、重置关键词、会话默认值）仍只在 `.env` 中；数据库里
 只有组级配置。字段为 NULL 的会话参数自动继承全局默认。

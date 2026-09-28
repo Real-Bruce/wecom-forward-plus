@@ -145,10 +145,13 @@ CREATE TABLE IF NOT EXISTS groups (
     session_max_total   INTEGER,          -- NULL = global default
     session_ttl_seconds INTEGER,          -- NULL = global default
     enabled             INTEGER NOT NULL DEFAULT 1,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at          TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
 );
 ```
+
+`created_at`/`updated_at` are stored as Beijing time (UTC+8) — SQLite's
+`datetime('now')` alone would be UTC.
 
 Add your first group directly in SQL:
 
