@@ -261,6 +261,13 @@ docker compose restart
 
 Configuration is injected via compose's `env_file` (`.env` in the repository root); the image itself contains no secrets. The host directory `logs/` (repository root) is mounted at `/app/logs` so the rotating log file (`logs/app.log`) persists across container recreations. The container restarts automatically (`unless-stopped`) unless explicitly stopped.
 
+The build downloads dependencies from official PyPI. If the build host has a poor route to pypi.org (common on servers in China — the build fails with `Could not find a version that satisfies the requirement <pkg> (from versions: none)`), set a mirror in `.env` and rebuild:
+
+```bash
+echo "PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple" >> .env
+docker compose up -d --build
+```
+
 In database mode the admin UI is reachable at `http://127.0.0.1:8080` on the host (compose overrides the in-container bind to `0.0.0.0` and publishes the port on host loopback). To expose it to the network, set `WECOM_ADMIN_PUBLISH_HOST=0.0.0.0` in `.env` and front it with TLS or a reverse proxy; to change the port, set `WECOM_FORWARD_PLUS_ADMIN_PORT` — the host and container ports follow it automatically.
 
 ## Tests

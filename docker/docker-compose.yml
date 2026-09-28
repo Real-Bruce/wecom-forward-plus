@@ -23,6 +23,11 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        # PyPI index used inside the build. Set PIP_INDEX_URL in the root .env
+        # to point the build at a mirror (e.g. Tsinghua) when the host has a
+        # poor route to pypi.org.
+        - PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.org/simple}
     image: wecom-forward-plus:latest
     container_name: wecom-forward-plus
     restart: unless-stopped

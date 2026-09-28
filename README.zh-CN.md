@@ -260,6 +260,13 @@ docker compose restart
 
 配置通过 compose 的 `env_file`（仓库根目录的 `.env`）注入；镜像本身不含密钥。宿主机的 `logs/` 目录（仓库根目录）挂载到 `/app/logs`，轮转日志 `logs/app.log` 在重建容器后仍然保留。容器会自动重启（`unless-stopped`），除非被显式停止。
 
+构建时默认从官方 PyPI 下载依赖。如果构建主机访问 pypi.org 的链路不佳（国内服务器常见，构建会报 `Could not find a version that satisfies the requirement <包名> (from versions: none)`），在 `.env` 里设置镜像源后重新构建：
+
+```bash
+echo "PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple" >> .env
+docker compose up -d --build
+```
+
 数据库模式下，管理页可以从宿主机的 `http://127.0.0.1:8080` 访问（compose 把容器内监听地址覆盖为 `0.0.0.0`，并把端口发布到宿主机回环地址）。要暴露到网络，在 `.env` 里设置 `WECOM_ADMIN_PUBLISH_HOST=0.0.0.0`，并在前面加 TLS 或反向代理；要改端口，设置 `WECOM_FORWARD_PLUS_ADMIN_PORT`，宿主机端口和容器端口会自动跟随。
 
 ## 测试

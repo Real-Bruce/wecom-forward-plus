@@ -12,6 +12,13 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
+# pip honors the PIP_INDEX_URL env var; ARG makes it overridable via compose
+# build args. Default is official PyPI — set a mirror (e.g. Tsinghua) when the
+# build host has a poor route to pypi.org, or `pip install` fails with
+# "Could not find a version that satisfies the requirement <pkg> (from
+# versions: none)".
+ARG PIP_INDEX_URL=https://pypi.org/simple
+
 RUN pip install --no-cache-dir .
 
 # Run the bridge. `python -m src.main` loads .env via python-dotenv, but
